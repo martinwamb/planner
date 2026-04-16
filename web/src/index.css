@@ -2,12 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  background-color: #f9f8f6;
+}
+
+/* Kanban drag-over highlight */
+.kanban-col-over {
+  outline: 2px dashed #6366f1;
+  outline-offset: -4px;
+  background-color: #f0f0ff;
 }
