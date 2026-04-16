@@ -3,14 +3,17 @@ const url = require('url');
 
 const BASE  = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
 const MODEL = process.env.OLLAMA_MODEL    || 'llama3:8b';
-const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
+// Inactivity timeout — with streaming, tokens arrive continuously so
+// this only fires if Ollama goes completely silent for 10 minutes.
+const INACTIVITY_MS = 10 * 60 * 1000;
 
 function chat(prompt, { model = MODEL, json = false } = {}) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
       model,
       prompt,
-      stream: false,
+      stream: true,            // Stream tokens so the socket stays alive
       format: json ? 'json' : undefined,
     });
 
@@ -24,23 +27,39 @@ function chat(prompt, { model = MODEL, json = false } = {}) {
         'Content-Type':   'application/json',
         'Content-Length': Buffer.byteLength(body),
       },
-      timeout: TIMEOUT_MS,
+      timeout: INACTIVITY_MS,
     }, (res) => {
-      let data = '';
-      res.on('data', chunk => { data += chunk; });
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(data);
-          resolve(parsed.response || '');
-        } catch (e) {
-          reject(new Error('Ollama returned invalid JSON: ' + data.slice(0, 100)));
+      let fullResponse = '';
+      let buffer = '';
+
+      res.on('data', chunk => {
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop(); // hold back any partial line
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const obj = JSON.parse(line);
+            if (obj.response) fullResponse += obj.response;
+          } catch { /* skip malformed lines */ }
         }
+      });
+
+      res.on('end', () => {
+        // Flush any remaining partial line in buffer
+        if (buffer.trim()) {
+          try {
+            const obj = JSON.parse(buffer);
+            if (obj.response) fullResponse += obj.response;
+          } catch { /* ignore */ }
+        }
+        resolve(fullResponse.trim());
       });
     });
 
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error('Ollama request timed out after 5 minutes'));
+      reject(new Error('Ollama went silent for 10 minutes — request aborted'));
     });
     req.on('error', reject);
     req.write(body);

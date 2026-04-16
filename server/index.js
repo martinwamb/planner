@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const db = require('./db');
-const { scheduleWeeklyDigest } = require('./cron');
+const { scheduleWeeklyDigest, scheduleDailyEnhancement } = require('./cron');
 
 const app = express();
 const PORT = process.env.PORT || 4002;
@@ -19,6 +19,7 @@ app.use('/api', require('./routes/tasks'));
 app.use('/api/ai', require('./routes/ai'));
 
 scheduleWeeklyDigest();
+scheduleDailyEnhancement();
 
 app.listen(PORT, () => {
   console.log(`Planner server running on port ${PORT}`);
