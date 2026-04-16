@@ -84,38 +84,43 @@ export default function Dashboard() {
     <div className="min-h-screen bg-[#f9f8f6]">
       {/* Header */}
       <header className="bg-white border-b border-gray-100 sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="max-w-6xl mx-auto px-6">
+          {/* Top row */}
+          <div className="py-4 flex items-center justify-between">
             <div>
               <h1 className="text-xl font-bold text-gray-900 tracking-tight">Planner</h1>
               <p className="text-xs text-gray-400">Welcome back, {user?.name?.split(' ')[0]}</p>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {/* View toggle */}
-            <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
-              {[['projects','◈ Projects'],['calendar','📅 Calendar']].map(([v, label]) => (
-                <button key={v} onClick={() => setView(v)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${view === v ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-                  {label}
-                </button>
-              ))}
+            <div className="flex items-center gap-2">
+              <button onClick={handleAIPriorities} disabled={aiLoading}
+                className="text-sm text-indigo-600 hover:text-indigo-800 px-3 py-2 rounded-lg hover:bg-indigo-50 transition-colors font-medium disabled:opacity-50">
+                {aiLoading ? '…' : '✦ AI Insights'}
+              </button>
+              <button onClick={handleSendDigest} disabled={aiLoading}
+                className="text-sm text-gray-500 hover:text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors hidden sm:block">
+                Send Digest
+              </button>
+              <button onClick={() => setModal('create')}
+                className="bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-xl hover:bg-gray-700 transition-colors">
+                + New Project
+              </button>
+              <button onClick={logout} className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded transition-colors">
+                Sign out
+              </button>
             </div>
-            <button onClick={handleAIPriorities} disabled={aiLoading}
-              className="text-sm text-indigo-600 hover:text-indigo-800 px-3 py-2 rounded-lg hover:bg-indigo-50 transition-colors font-medium disabled:opacity-50">
-              {aiLoading ? '…' : '✦ AI'}
-            </button>
-            <button onClick={handleSendDigest} disabled={aiLoading}
-              className="text-sm text-gray-500 hover:text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors hidden sm:block">
-              Digest
-            </button>
-            <button onClick={() => setModal('create')}
-              className="bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-xl hover:bg-gray-700 transition-colors">
-              + New
-            </button>
-            <button onClick={logout} className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded transition-colors">
-              Sign out
-            </button>
+          </div>
+          {/* View tabs row */}
+          <div className="flex gap-0 border-t border-gray-100">
+            {[['projects', 'Projects'], ['calendar', 'Calendar']].map(([v, label]) => (
+              <button key={v} onClick={() => setView(v)}
+                className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-all ${
+                  view === v
+                    ? 'border-gray-900 text-gray-900'
+                    : 'border-transparent text-gray-400 hover:text-gray-600'
+                }`}>
+                {label}
+              </button>
+            ))}
           </div>
         </div>
       </header>
@@ -190,7 +195,7 @@ export default function Dashboard() {
         </AnimatePresence>
 
         {/* Filter bar — projects view only */}
-        {view === 'projects' && <div className="flex flex-wrap items-center gap-3">
+        {view === 'projects' && (<div className="flex flex-wrap items-center gap-3">
           {/* Status filter */}
           <div className="flex gap-1 bg-white border border-gray-100 p-1 rounded-xl shadow-sm">
             {FILTER_OPTIONS.map(opt => (
@@ -224,7 +229,8 @@ export default function Dashboard() {
             className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1.5 rounded-lg hover:bg-white transition-colors border border-dashed border-gray-200">
             + Manage Tags
           </button>
-        </div>}
+        </div>
+        )}
 
         {/* Calendar view */}
         {view === 'calendar' && (
@@ -232,18 +238,18 @@ export default function Dashboard() {
         )}
 
         {/* Projects grid */}
-        {view === 'projects' && loading ? (
+        {view === 'projects' && (loading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {[...Array(3)].map((_, i) => (
               <div key={i} className="bg-white rounded-xl border border-gray-100 h-44 animate-pulse" />
             ))}
           </div>
-        ) : view === 'projects' && filtered.length === 0 ? (
+        ) : filtered.length === 0 ? (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center py-20 text-gray-400">
             <p className="text-4xl mb-3">📋</p>
             <p className="text-sm">{statusFilter === 'all' && !tagFilter ? 'No projects yet.' : 'No projects match this filter.'}</p>
           </motion.div>
-        ) : view === 'projects' ? (
+        ) : (
           <motion.div layout className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <AnimatePresence>
               {filtered.map((project, i) => (
@@ -252,7 +258,7 @@ export default function Dashboard() {
               ))}
             </AnimatePresence>
           </motion.div>
-        )}
+        ))}
       </main>
 
       {/* Modals */}

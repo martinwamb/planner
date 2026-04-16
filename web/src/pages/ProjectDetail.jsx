@@ -175,9 +175,9 @@ export default function ProjectDetail() {
   const tasksByCol = Object.fromEntries(COLUMNS.map(c => [c.id, tasks.filter(t => t.status === c.id)]));
 
   return (
-    <div className="min-h-screen bg-[#f9f8f6] flex flex-col">
+    <div className="h-screen bg-[#f9f8f6] flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="bg-white border-b border-gray-100 sticky top-0 z-20">
+      <header className="bg-white border-b border-gray-100 flex-shrink-0 z-20">
         <div className="px-6 py-4 flex items-center gap-4">
           <button onClick={() => navigate('/dashboard')}
             className="text-gray-400 hover:text-gray-600 transition-colors text-sm flex-shrink-0">
@@ -206,10 +206,10 @@ export default function ProjectDetail() {
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 min-h-0">
         {/* Main content */}
-        <div className="flex-1 overflow-auto">
-          <div className="px-6 py-6 space-y-5 max-w-6xl">
+        <div className="flex-1 overflow-y-auto">
+          <div className="px-6 py-6 space-y-5">
             {/* Project info bar */}
             <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
               <div className="h-1.5 w-full" style={{ backgroundColor: project.color }} />
@@ -294,10 +294,10 @@ export default function ProjectDetail() {
           {sidebarOpen && (
             <motion.aside
               initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 220, opacity: 1 }}
+              animate={{ width: 240, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
               transition={{ duration: 0.2 }}
-              className="border-l border-gray-100 bg-white overflow-y-auto flex-shrink-0"
+              className="border-l border-gray-100 bg-white overflow-y-auto flex-shrink-0 min-h-0"
             >
               <div className="p-4">
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">All Projects</p>
