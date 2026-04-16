@@ -9,6 +9,31 @@ function ownsProject(projectId, userId) {
   return db.prepare('SELECT id FROM projects WHERE id = ? AND user_id = ?').get(projectId, userId);
 }
 
+// Recalculate task status from checklist completion rate
+function recalcTaskStatus(taskId) {
+  const stats = db.prepare(
+    'SELECT COUNT(*) as total, SUM(checked) as checked FROM checklist_items WHERE task_id = ?'
+  ).get(taskId);
+  if (!stats.total) return null;
+  const pct = (stats.checked / stats.total) * 100;
+  const newStatus = pct === 0 ? 'todo' : pct < 50 ? 'in-progress' : pct < 100 ? 'review' : 'done';
+  db.prepare("UPDATE tasks SET status = ?, updated_at = datetime('now') WHERE id = ?").run(newStatus, taskId);
+  return newStatus;
+}
+
+// Recalculate project progress from all checklist items across all tasks
+function recalcProjectProgress(projectId) {
+  const stats = db.prepare(`
+    SELECT COUNT(*) as total, SUM(ci.checked) as checked
+    FROM checklist_items ci
+    JOIN tasks t ON t.id = ci.task_id
+    WHERE t.project_id = ?
+  `).get(projectId);
+  const progress = stats.total > 0 ? Math.round((stats.checked / stats.total) * 100) : 0;
+  db.prepare("UPDATE projects SET progress = ?, updated_at = datetime('now') WHERE id = ?").run(progress, projectId);
+  return progress;
+}
+
 function attachChecklist(tasks) {
   if (!tasks.length) return tasks;
   const ids = tasks.map(t => t.id);
@@ -118,10 +143,10 @@ router.patch('/tasks/:id/status', (req, res) => {
   res.json({ ok: true });
 });
 
-// PATCH /api/checklist/:id — toggle checklist item
+// PATCH /api/checklist/:id — toggle checklist item, auto-update task status + project progress
 router.patch('/checklist/:id', (req, res) => {
   const item = db.prepare(`
-    SELECT ci.* FROM checklist_items ci
+    SELECT ci.*, t.project_id FROM checklist_items ci
     JOIN tasks t ON t.id = ci.task_id
     JOIN projects p ON p.id = t.project_id
     WHERE ci.id = ? AND p.user_id = ?
@@ -129,7 +154,9 @@ router.patch('/checklist/:id', (req, res) => {
   if (!item) return res.status(404).json({ error: 'Not found' });
   const { checked } = req.body;
   db.prepare('UPDATE checklist_items SET checked = ? WHERE id = ?').run(checked ? 1 : 0, req.params.id);
-  res.json({ ok: true });
+  const task_status    = recalcTaskStatus(item.task_id);
+  const project_progress = recalcProjectProgress(item.project_id);
+  res.json({ ok: true, task_status, project_progress });
 });
 
 // DELETE /api/tasks/:id

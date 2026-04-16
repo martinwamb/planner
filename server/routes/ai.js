@@ -153,4 +153,88 @@ Return only the HTML body content (no <html>/<head> tags).`;
   }
 });
 
+// POST /api/ai/daily-plan
+// Returns AI-generated prioritised task plan for a given date
+router.post('/daily-plan', async (req, res) => {
+  const { date } = req.body;
+  if (!date) return res.status(400).json({ error: 'Date required' });
+
+  // Gather all active projects with their tasks and unchecked checklist items
+  const projects = db.prepare(`
+    SELECT id, name, color, priority, deadline, status
+    FROM projects WHERE user_id = ? AND status != 'complete'
+    ORDER BY priority DESC, deadline ASC NULLS LAST
+  `).all(req.user.id);
+
+  if (!projects.length) return res.json({ summary: 'No active projects.', blocks: [] });
+
+  const projectsWithTasks = projects.map(p => {
+    const tasks = db.prepare(`
+      SELECT t.id, t.title, t.status, t.context, t.purpose, t.approach
+      FROM tasks t WHERE t.project_id = ? AND t.status != 'done'
+    `).all(p.id);
+
+    const tasksWithItems = tasks.map(t => {
+      const items = db.prepare(
+        'SELECT text FROM checklist_items WHERE task_id = ? AND checked = 0 ORDER BY position ASC LIMIT 6'
+      ).all(t.id).map(i => i.text);
+      return { ...t, pending_items: items };
+    }).filter(t => t.pending_items.length > 0 || t.status === 'in-progress');
+
+    return { ...p, tasks: tasksWithItems };
+  }).filter(p => p.tasks.length > 0);
+
+  if (!projectsWithTasks.length) {
+    return res.json({ summary: 'All checklist items are complete. Great work!', blocks: [] });
+  }
+
+  const projectList = projectsWithTasks.map(p =>
+    `Project: "${p.name}" (priority: ${p.priority}, deadline: ${p.deadline || 'none'}, color: ${p.color})\n` +
+    p.tasks.map(t =>
+      `  Task: "${t.title}" [${t.status}]\n` +
+      (t.pending_items.length ? `    Pending items: ${t.pending_items.slice(0, 4).join(' | ')}` : '')
+    ).join('\n')
+  ).join('\n\n');
+
+  const prompt = `Today is ${date}. You are a productivity coach planning someone's workday.
+
+Active projects and their pending work:
+${projectList}
+
+Create a focused daily plan. Prioritise by: deadline urgency, task already in-progress, project priority.
+Spread work across at most 3 projects. Keep it realistic for one day.
+
+Respond ONLY with valid JSON, no markdown:
+{
+  "summary": "one encouraging sentence about what to focus on today",
+  "blocks": [
+    {
+      "label": "Top Priority",
+      "project": "exact project name",
+      "color": "exact hex color from above",
+      "task": "exact task title",
+      "items": ["specific checklist item to do today", "another item"],
+      "reason": "one short sentence why this is important today"
+    }
+  ]
+}
+
+Include 3-5 blocks maximum. Use labels: "Top Priority", "Important", "If time allows".`;
+
+  try {
+    const raw = await chat(prompt, { json: true });
+    let parsed;
+    try { parsed = JSON.parse(raw); }
+    catch {
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) return res.status(500).json({ error: 'AI returned invalid response' });
+      parsed = JSON.parse(match[0]);
+    }
+    res.json(parsed);
+  } catch (err) {
+    console.error('Daily plan error:', err);
+    res.status(500).json({ error: 'AI unavailable' });
+  }
+});
+
 module.exports = router;

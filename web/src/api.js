@@ -43,4 +43,5 @@ export const api = {
   enhanceTask:        (body) => request('/ai/enhance-task',        { method: 'POST', body: JSON.stringify(body) }),
   suggestPriorities:  ()     => request('/ai/suggest-priorities',  { method: 'POST' }),
   sendWeeklyDigest:   ()     => request('/ai/weekly-digest',       { method: 'POST' }),
+  getDailyPlan:       (date) => request('/ai/daily-plan',          { method: 'POST', body: JSON.stringify({ date }) }),
 };

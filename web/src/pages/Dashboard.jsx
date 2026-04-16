@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import ProjectCard from '../components/ProjectCard';
 import ProjectModal from '../components/ProjectModal';
 import TagManager from '../components/TagManager';
+import CalendarView from '../components/CalendarView';
 import { STATUSES } from '../constants';
 
 const FILTER_OPTIONS = [{ value: 'all', label: 'All' }, ...STATUSES];
@@ -21,6 +22,7 @@ export default function Dashboard() {
   const [showTagMgr, setShowTagMgr]     = useState(false);
   const [aiPanel, setAiPanel]           = useState(null);
   const [aiLoading, setAiLoading]       = useState(false);
+  const [view, setView]                 = useState('projects'); // 'projects' | 'calendar'
 
   useEffect(() => {
     Promise.all([api.getProjects(), api.getTags()])
@@ -90,19 +92,28 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* View toggle */}
+            <div className="flex gap-1 bg-gray-100 p-1 rounded-xl">
+              {[['projects','◈ Projects'],['calendar','📅 Calendar']].map(([v, label]) => (
+                <button key={v} onClick={() => setView(v)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${view === v ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
             <button onClick={handleAIPriorities} disabled={aiLoading}
               className="text-sm text-indigo-600 hover:text-indigo-800 px-3 py-2 rounded-lg hover:bg-indigo-50 transition-colors font-medium disabled:opacity-50">
-              {aiLoading ? '…' : '✦ AI Insights'}
+              {aiLoading ? '…' : '✦ AI'}
             </button>
             <button onClick={handleSendDigest} disabled={aiLoading}
-              className="text-sm text-gray-500 hover:text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors">
-              Send Digest
+              className="text-sm text-gray-500 hover:text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors hidden sm:block">
+              Digest
             </button>
             <button onClick={() => setModal('create')}
               className="bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-xl hover:bg-gray-700 transition-colors">
-              + New Project
+              + New
             </button>
-            <button onClick={logout} className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded transition-colors ml-1">
+            <button onClick={logout} className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1 rounded transition-colors">
               Sign out
             </button>
           </div>
@@ -178,8 +189,8 @@ export default function Dashboard() {
           )}
         </AnimatePresence>
 
-        {/* Filter bar */}
-        <div className="flex flex-wrap items-center gap-3">
+        {/* Filter bar — projects view only */}
+        {view === 'projects' && <div className="flex flex-wrap items-center gap-3">
           {/* Status filter */}
           <div className="flex gap-1 bg-white border border-gray-100 p-1 rounded-xl shadow-sm">
             {FILTER_OPTIONS.map(opt => (
@@ -213,21 +224,26 @@ export default function Dashboard() {
             className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1.5 rounded-lg hover:bg-white transition-colors border border-dashed border-gray-200">
             + Manage Tags
           </button>
-        </div>
+        </div>}
 
-        {/* Grid */}
-        {loading ? (
+        {/* Calendar view */}
+        {view === 'calendar' && (
+          <CalendarView projects={projects} />
+        )}
+
+        {/* Projects grid */}
+        {view === 'projects' && loading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {[...Array(3)].map((_, i) => (
               <div key={i} className="bg-white rounded-xl border border-gray-100 h-44 animate-pulse" />
             ))}
           </div>
-        ) : filtered.length === 0 ? (
+        ) : view === 'projects' && filtered.length === 0 ? (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center py-20 text-gray-400">
             <p className="text-4xl mb-3">📋</p>
             <p className="text-sm">{statusFilter === 'all' && !tagFilter ? 'No projects yet.' : 'No projects match this filter.'}</p>
           </motion.div>
-        ) : (
+        ) : view === 'projects' ? (
           <motion.div layout className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             <AnimatePresence>
               {filtered.map((project, i) => (
