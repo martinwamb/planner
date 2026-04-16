@@ -7,8 +7,36 @@ const { sendMail } = require('../email');
 const router = express.Router();
 router.use(requireAuth);
 
-// POST /api/ai/enhance-task
-// Takes rough notes and structures them into Context/Purpose/Outcome/Approach + checklist
+// ─── SSE helper ──────────────────────────────────────────────────────────────
+// Opens an SSE stream on `res`, sends `: ping` every 5 s so nginx never hits
+// proxy_read_timeout, awaits the Ollama chat, then resolves with the raw text.
+// The caller is responsible for writing `data: ...` and calling res.end().
+function openSSE(res) {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const timer = setInterval(() => {
+    if (!res.writableEnded) res.write(': ping\n\n');
+  }, 5000);
+
+  return () => clearInterval(timer); // call to stop pinging
+}
+
+function sseJSON(res, stopPing, data) {
+  stopPing();
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
+  res.end();
+}
+
+function sseError(res, stopPing, message) {
+  stopPing();
+  res.write(`event: error\ndata: ${JSON.stringify({ error: message })}\n\n`);
+  res.end();
+}
+
+// ─── POST /api/ai/enhance-task ───────────────────────────────────────────────
 router.post('/enhance-task', async (req, res) => {
   const { notes, title } = req.body;
   if (!notes?.trim()) return res.status(400).json({ error: 'Notes required' });
@@ -33,26 +61,25 @@ outcome = what success looks like when done
 approach = how to execute, step by step thinking
 checklist = specific actionable to-do items`;
 
+  const stopPing = openSSE(res);
+
   try {
     const raw = await chat(prompt, { json: true });
     let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      // Try to extract JSON from response
+    try { parsed = JSON.parse(raw); }
+    catch {
       const match = raw.match(/\{[\s\S]*\}/);
-      if (!match) return res.status(500).json({ error: 'AI returned invalid response' });
+      if (!match) return sseError(res, stopPing, 'AI returned invalid response');
       parsed = JSON.parse(match[0]);
     }
-    res.json(parsed);
+    sseJSON(res, stopPing, parsed);
   } catch (err) {
     console.error('AI enhance error:', err);
-    res.status(500).json({ error: 'AI unavailable' });
+    sseError(res, stopPing, 'AI unavailable. Make sure Ollama is running.');
   }
 });
 
-// POST /api/ai/suggest-priorities
-// Analyses all user projects and returns prioritisation advice
+// ─── POST /api/ai/suggest-priorities ─────────────────────────────────────────
 router.post('/suggest-priorities', async (req, res) => {
   const projects = db.prepare(`
     SELECT name, status, priority, progress, deadline, description, updated_at
@@ -60,7 +87,10 @@ router.post('/suggest-priorities', async (req, res) => {
     ORDER BY created_at ASC
   `).all(req.user.id);
 
-  if (!projects.length) return res.json({ summary: 'No active projects to analyse.' });
+  if (!projects.length) {
+    // No Ollama needed — respond normally
+    return res.json({ summary: 'No active projects to analyse.' });
+  }
 
   const today = new Date().toISOString().split('T')[0];
   const projectList = projects.map((p, i) =>
@@ -82,25 +112,25 @@ Respond with a JSON object:
 
 Only valid JSON, no markdown.`;
 
+  const stopPing = openSSE(res);
+
   try {
     const raw = await chat(prompt, { json: true });
     let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
+    try { parsed = JSON.parse(raw); }
+    catch {
       const match = raw.match(/\{[\s\S]*\}/);
-      if (!match) return res.status(500).json({ error: 'AI returned invalid response' });
+      if (!match) return sseError(res, stopPing, 'AI returned invalid response');
       parsed = JSON.parse(match[0]);
     }
-    res.json(parsed);
+    sseJSON(res, stopPing, parsed);
   } catch (err) {
     console.error('AI priorities error:', err);
-    res.status(500).json({ error: 'AI unavailable' });
+    sseError(res, stopPing, 'AI unavailable. Make sure Ollama is running.');
   }
 });
 
-// POST /api/ai/weekly-digest
-// Generates and emails a weekly summary to the user
+// ─── POST /api/ai/weekly-digest ───────────────────────────────────────────────
 router.post('/weekly-digest', async (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   const projects = db.prepare(`
@@ -113,9 +143,7 @@ router.post('/weekly-digest', async (req, res) => {
 
   const today = new Date().toISOString().split('T')[0];
   const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString();
-
   const active = projects.filter(p => p.status !== 'complete');
-  const complete = projects.filter(p => p.status === 'complete');
   const overdue = active.filter(p => p.deadline && new Date(p.deadline) < new Date());
   const neglected = active.filter(p => p.updated_at < twoWeeksAgo);
 
@@ -130,36 +158,34 @@ ${projectList}
 
 Write an HTML email digest. Be direct, practical, and encouraging. Include:
 1. A brief overall status (1-2 sentences)
-2. What needs attention this week (overdue or neglected items)
+2. What needs attention this week (overdue: ${overdue.length}, neglected: ${neglected.length})
 3. Top 3 priorities for this week with brief rationale
 4. One motivational closing line
 
-Format as clean HTML with inline styles. Use a simple table-based layout. Colors: headers #1a1a1a, accent #6366f1, warning #f43f5e, success #10b981. No external CSS.
-Return only the HTML body content (no <html>/<head> tags).`;
+Format as clean HTML with inline styles. Colors: headers #1a1a1a, accent #6366f1, warning #f43f5e, success #10b981.
+Return only the HTML body content.`;
+
+  const stopPing = openSSE(res);
 
   try {
     const html = await chat(prompt);
-
     const subject = `Your weekly planner digest — ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}`;
     await sendMail({ to: user.email, subject, html });
-
-    res.json({
+    sseJSON(res, stopPing, {
       ok: true,
-      stats: { total: projects.length, active: active.length, complete: complete.length, overdue: overdue.length, neglected: neglected.length }
+      stats: { total: projects.length, active: active.length, overdue: overdue.length, neglected: neglected.length }
     });
   } catch (err) {
     console.error('Weekly digest error:', err);
-    res.status(500).json({ error: 'Failed to generate digest' });
+    sseError(res, stopPing, 'Failed to generate digest');
   }
 });
 
-// POST /api/ai/daily-plan
-// Returns AI-generated prioritised task plan for a given date
+// ─── POST /api/ai/daily-plan ──────────────────────────────────────────────────
 router.post('/daily-plan', async (req, res) => {
   const { date } = req.body;
   if (!date) return res.status(400).json({ error: 'Date required' });
 
-  // Gather all active projects with their tasks and unchecked checklist items
   const projects = db.prepare(`
     SELECT id, name, color, priority, deadline, status
     FROM projects WHERE user_id = ? AND status != 'complete'
@@ -221,19 +247,21 @@ Respond ONLY with valid JSON, no markdown:
 
 Include 3-5 blocks maximum. Use labels: "Top Priority", "Important", "If time allows".`;
 
+  const stopPing = openSSE(res);
+
   try {
     const raw = await chat(prompt, { json: true });
     let parsed;
     try { parsed = JSON.parse(raw); }
     catch {
       const match = raw.match(/\{[\s\S]*\}/);
-      if (!match) return res.status(500).json({ error: 'AI returned invalid response' });
+      if (!match) return sseError(res, stopPing, 'AI returned invalid response');
       parsed = JSON.parse(match[0]);
     }
-    res.json(parsed);
+    sseJSON(res, stopPing, parsed);
   } catch (err) {
     console.error('Daily plan error:', err);
-    res.status(500).json({ error: 'AI unavailable' });
+    sseError(res, stopPing, 'AI unavailable');
   }
 });
 
