@@ -96,9 +96,12 @@ export default function Dashboard() {
         <div className="max-w-6xl mx-auto px-6">
           {/* Top row */}
           <div className="py-4 flex items-center justify-between">
-            <div>
-              <h1 className="text-xl font-bold text-gray-900 tracking-tight">Planner</h1>
-              <p className="text-xs text-gray-400">Welcome back, {user?.name?.split(' ')[0]}</p>
+            <div className="flex items-center gap-3">
+              <img src="/logo.svg" alt="Planner" className="w-9 h-9 rounded-xl" />
+              <div>
+                <h1 className="text-xl font-bold text-gray-900 tracking-tight">Planner</h1>
+                <p className="text-xs text-gray-400">Welcome back, {user?.name?.split(' ')[0]}</p>
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <button onClick={handleAIPriorities} disabled={aiLoading}

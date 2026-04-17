@@ -13,7 +13,10 @@ export default function Landing() {
     <div className="min-h-screen bg-[#f9f8f6] flex flex-col">
       {/* Nav */}
       <nav className="flex items-center justify-between px-8 py-5 max-w-5xl mx-auto w-full">
-        <span className="text-lg font-bold text-gray-900 tracking-tight">Planner</span>
+        <div className="flex items-center gap-2">
+          <img src="/logo.svg" alt="Planner" className="w-8 h-8 rounded-lg" />
+          <span className="text-lg font-bold text-gray-900 tracking-tight">Planner</span>
+        </div>
         <Link to="/login"
           className="text-sm text-gray-500 hover:text-gray-900 font-medium transition-colors">
           Sign in →

@@ -41,6 +41,9 @@ export default function Login() {
         className="w-full max-w-sm"
       >
         <div className="text-center mb-8">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <img src="/logo.svg" alt="Planner" className="w-10 h-10 rounded-xl" />
+          </div>
           <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Planner</h1>
           <p className="text-sm text-gray-400 mt-1">
             {mode === 'login' ? 'Sign in to your workspace' : 'Create your workspace'}
