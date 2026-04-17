@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../auth');
+const { enhanceTask } = require('../enhancer');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -95,6 +96,11 @@ router.post('/projects/:projectId/tasks', (req, res) => {
 
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json(attachChecklist([task])[0]);
+
+  // Fire-and-forget background enhancement — runs on the server even if the
+  // browser closes. Ollama updates context/purpose/outcome/approach + checklist
+  // asynchronously; the task will be structured next time the user opens it.
+  if (title.trim()) enhanceTask(result.lastInsertRowid);
 });
 
 // PUT /api/tasks/:id

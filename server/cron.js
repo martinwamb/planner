@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const db = require('./db');
 const { chat } = require('./ollama');
 const { sendMail } = require('./email');
+const { enhanceAllUnenhanced } = require('./enhancer');
 
 // ─── Weekly digest ────────────────────────────────────────────────────────────
 function scheduleWeeklyDigest() {
@@ -56,16 +57,18 @@ Return only the HTML body content.`;
   console.log('[cron] Weekly digest scheduled for Mondays at 08:00');
 }
 
-// ─── Daily task checklist enhancement ────────────────────────────────────────
-// Runs every day at 09:00. For each active task that has fewer than 3 unchecked
-// items, AI suggests simple, practical next steps and adds them to the checklist.
+// ─── Daily task enhancement ───────────────────────────────────────────────────
+// Runs every day at 09:00. Enhances any tasks that still lack structure,
+// then tops up checklist items on tasks with fewer than 3 unchecked items.
 function scheduleDailyEnhancement() {
   cron.schedule('0 9 * * *', async () => {
-    console.log('[cron] Running daily checklist enhancement...');
+    console.log('[cron] Running daily enhancement...');
     try {
-      const today = new Date().toISOString().split('T')[0];
+      // 1. Enhance any tasks that were never structured
+      await enhanceAllUnenhanced();
 
-      // Get all active tasks (project not complete, task not done)
+      // 2. Top up checklist items on tasks with < 3 unchecked items
+      const today = new Date().toISOString().split('T')[0];
       const tasks = db.prepare(`
         SELECT t.id, t.title, t.status, t.raw_notes,
                p.name AS project_name, p.description AS project_desc
@@ -76,38 +79,24 @@ function scheduleDailyEnhancement() {
       `).all();
 
       for (const task of tasks) {
-        // Count unchecked items for this task
         const { unchecked } = db.prepare(
           'SELECT COUNT(*) AS unchecked FROM checklist_items WHERE task_id = ? AND checked = 0'
         ).get(task.id);
-
-        // Only enhance tasks that need more items (fewer than 3 unchecked)
         if (unchecked >= 3) continue;
 
-        // Get existing item texts to avoid duplicates
-        const existing = db.prepare(
-          'SELECT text FROM checklist_items WHERE task_id = ?'
-        ).all(task.id).map(r => r.text.toLowerCase());
+        const existing = db.prepare('SELECT text FROM checklist_items WHERE task_id = ?')
+          .all(task.id).map(r => r.text.toLowerCase());
 
         const prompt = `Today is ${today}. You are a helpful project assistant.
-
 Project: "${task.project_name}"
-${task.project_desc ? `Project description: ${task.project_desc}` : ''}
 Task: "${task.title}"
-${task.raw_notes ? `Task notes: ${task.raw_notes}` : ''}
-Current task status: ${task.status}
-${existing.length ? `Existing checklist items: ${existing.join(', ')}` : ''}
+${task.raw_notes ? `Notes: ${task.raw_notes}` : ''}
+Current status: ${task.status}
+${existing.length ? `Existing items: ${existing.join(', ')}` : ''}
 
-Suggest exactly 3 simple, practical next-step checklist items for this task.
-Rules:
-- Each item should be a short, clear action (max 10 words)
-- Keep language non-technical and straightforward
-- Focus on communication, review, or progress actions
-- Do NOT repeat existing items
-- No explanations, just the list
-
-Respond with ONLY valid JSON, no markdown:
-{"items": ["action one", "action two", "action three"]}`;
+Suggest exactly 3 simple, practical next-step checklist items.
+Rules: short (max 10 words), non-technical, no repeats, no explanations.
+Respond ONLY with valid JSON: {"items": ["action one", "action two", "action three"]}`;
 
         let parsed;
         try {
@@ -115,40 +104,37 @@ Respond with ONLY valid JSON, no markdown:
           try { parsed = JSON.parse(raw); }
           catch {
             const m = raw.match(/\{[\s\S]*\}/);
-            if (!m) { console.warn(`[cron] Bad AI response for task ${task.id}`); continue; }
+            if (!m) continue;
             parsed = JSON.parse(m[0]);
           }
         } catch (err) {
           console.error(`[cron] AI failed for task ${task.id}:`, err.message);
-          continue; // skip this task, try the next
+          continue;
         }
 
         const newItems = (parsed.items || [])
-          .filter(text => typeof text === 'string' && text.trim())
-          .filter(text => !existing.includes(text.toLowerCase()))
+          .filter(t => typeof t === 'string' && t.trim())
+          .filter(t => !existing.includes(t.toLowerCase()))
           .slice(0, 3);
 
         if (!newItems.length) continue;
 
-        // Insert new checklist items
         const maxPos = db.prepare(
           'SELECT COALESCE(MAX(position), -1) AS m FROM checklist_items WHERE task_id = ?'
         ).get(task.id).m;
-
         const insert = db.prepare(
           'INSERT INTO checklist_items (task_id, text, checked, position) VALUES (?, ?, 0, ?)'
         );
         newItems.forEach((text, i) => insert.run(task.id, text.trim(), maxPos + 1 + i));
-
-        console.log(`[cron] Added ${newItems.length} item(s) to task "${task.title}" (id ${task.id})`);
+        console.log(`[cron] Topped up ${newItems.length} item(s) on task "${task.title}"`);
       }
 
-      console.log('[cron] Daily checklist enhancement complete.');
+      console.log('[cron] Daily enhancement complete.');
     } catch (err) {
       console.error('[cron] Daily enhancement failed:', err);
     }
   });
-  console.log('[cron] Daily checklist enhancement scheduled for 09:00');
+  console.log('[cron] Daily enhancement scheduled for 09:00');
 }
 
 module.exports = { scheduleWeeklyDigest, scheduleDailyEnhancement };
