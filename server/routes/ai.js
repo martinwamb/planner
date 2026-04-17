@@ -186,6 +186,13 @@ router.post('/daily-plan', async (req, res) => {
   const { date } = req.body;
   if (!date) return res.status(400).json({ error: 'Date required' });
 
+  // Check DB cache first — only regenerate for a new day
+  const cached = db.prepare('SELECT plan_json FROM daily_plans WHERE user_id = ? AND date = ?').get(req.user.id, date);
+  if (cached) {
+    const stopPing = openSSE(res);
+    return sseJSON(res, stopPing, JSON.parse(cached.plan_json));
+  }
+
   const projects = db.prepare(`
     SELECT id, name, color, priority, deadline, status
     FROM projects WHERE user_id = ? AND status != 'complete'
@@ -258,6 +265,24 @@ Include 3-5 blocks maximum. Use labels: "Top Priority", "Important", "If time al
       if (!match) return sseError(res, stopPing, 'AI returned invalid response');
       parsed = JSON.parse(match[0]);
     }
+
+    // Enrich blocks with project_id and task_id for clickable navigation
+    if (parsed.blocks) {
+      for (const block of parsed.blocks) {
+        const proj = projects.find(p => p.name.toLowerCase() === block.project?.toLowerCase());
+        if (proj) {
+          block.project_id = proj.id;
+          const task = db.prepare('SELECT id FROM tasks WHERE project_id = ? AND title = ? LIMIT 1').get(proj.id, block.task);
+          if (task) block.task_id = task.id;
+        }
+      }
+    }
+
+    // Persist so plan survives page refresh until tomorrow
+    try {
+      db.prepare('INSERT OR REPLACE INTO daily_plans (user_id, date, plan_json) VALUES (?, ?, ?)').run(req.user.id, date, JSON.stringify(parsed));
+    } catch (e) { console.warn('Could not persist daily plan:', e.message); }
+
     sseJSON(res, stopPing, parsed);
   } catch (err) {
     console.error('Daily plan error:', err);

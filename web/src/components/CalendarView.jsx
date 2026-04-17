@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '../api';
 
@@ -20,6 +21,7 @@ function localISO(d) {
 export default function CalendarView({ projects }) {
   const today = new Date();
   const todayStr = localISO(today);
+  const navigate = useNavigate();
 
   const [cursor, setCursor]       = useState(new Date(today.getFullYear(), today.getMonth(), 1));
   const [selected, setSelected]   = useState(todayStr); // auto-select today
@@ -249,16 +251,20 @@ export default function CalendarView({ projects }) {
                   {plan.error   && <p className="text-sm text-rose-500">{plan.error}</p>}
                 </div>
                 <div className="divide-y divide-gray-50">
-                  {plan.blocks?.map((block, i) => (
+                  {plan.blocks?.map((block, i) => {
+                    const clickable = block.project_id && block.task_id;
+                    return (
                     <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: i * 0.07 }}
-                      className="px-5 py-4 space-y-2">
+                      onClick={clickable ? () => navigate(`/projects/${block.project_id}?openTask=${block.task_id}`) : undefined}
+                      className={`px-5 py-4 space-y-2 ${clickable ? 'cursor-pointer hover:bg-indigo-50/50 transition-colors' : ''}`}>
                       <div className="flex items-center gap-2">
                         <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${LABEL_COLORS[block.label] || 'bg-gray-50 border-gray-200 text-gray-600'}`}>
                           {block.label}
                         </span>
                         <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: block.color }} />
                         <span className="text-xs text-gray-500 truncate">{block.project}</span>
+                        {clickable && <span className="text-xs text-indigo-400 ml-auto flex-shrink-0">Open →</span>}
                       </div>
                       <p className="text-sm font-semibold text-gray-900">{block.task}</p>
                       {block.items?.length > 0 && (
@@ -273,7 +279,7 @@ export default function CalendarView({ projects }) {
                       )}
                       {block.reason && <p className="text-xs text-gray-400 italic">{block.reason}</p>}
                     </motion.div>
-                  ))}
+                  )})}
                 </div>
                 {plan.blocks?.length === 0 && !plan.error && (
                   <div className="px-5 py-8 text-center text-sm text-gray-400">Nothing specific planned for this day.</div>

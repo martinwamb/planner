@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '../api';
 import ProjectModal from '../components/ProjectModal';
@@ -90,6 +90,7 @@ function TaskCard({ task, onEdit, onDelete, onStatusChange, onChecklistToggle })
 export default function ProjectDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [project, setProject]     = useState(null);
   const [allProjects, setAllProjects] = useState([]);
   const [tasks, setTasks]         = useState([]);
@@ -107,6 +108,15 @@ export default function ProjectDetail() {
       .catch(() => navigate('/dashboard'))
       .finally(() => setLoading(false));
   }, [id]);
+
+  // Auto-open task modal when navigated from calendar with ?openTask=id
+  useEffect(() => {
+    const openTaskId = searchParams.get('openTask');
+    if (!loading && openTaskId) {
+      const task = tasks.find(t => String(t.id) === openTaskId);
+      if (task) setTaskModal(task);
+    }
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSaveProject(form) {
     const updated = await api.updateProject(id, form);

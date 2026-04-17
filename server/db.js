@@ -70,6 +70,15 @@ db.exec(`
     checked INTEGER DEFAULT 0,
     position INTEGER DEFAULT 0
   );
+
+  CREATE TABLE IF NOT EXISTS daily_plans (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    plan_json TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(user_id, date)
+  );
 `);
 
 // Migration: add user_id column to projects if it doesn't exist yet
