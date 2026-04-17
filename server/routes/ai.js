@@ -265,4 +265,101 @@ Include 3-5 blocks maximum. Use labels: "Top Priority", "Important", "If time al
   }
 });
 
+// ─── POST /api/ai/week-plan ───────────────────────────────────────────────────
+// Returns a 5-working-day plan starting from the given date.
+router.post('/week-plan', async (req, res) => {
+  const { date } = req.body;
+  if (!date) return res.status(400).json({ error: 'Date required' });
+
+  const projects = db.prepare(`
+    SELECT id, name, color, priority, deadline, status
+    FROM projects WHERE user_id = ? AND status != 'complete'
+    ORDER BY priority DESC, deadline ASC NULLS LAST
+  `).all(req.user.id);
+
+  if (!projects.length) return res.json({ summary: 'No active projects.', days: [] });
+
+  const projectsWithTasks = projects.map(p => {
+    const tasks = db.prepare(`
+      SELECT t.id, t.title, t.status
+      FROM tasks t WHERE t.project_id = ? AND t.status != 'done'
+    `).all(p.id);
+    return { ...p, tasks };
+  }).filter(p => p.tasks.length > 0);
+
+  if (!projectsWithTasks.length) {
+    return res.json({ summary: 'All tasks are complete. Great work!', days: [] });
+  }
+
+  // Build next 5 working days from the start date
+  const start = new Date(date + 'T12:00:00');
+  const workDays = [];
+  let d = new Date(start);
+  while (workDays.length < 5) {
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) {
+      workDays.push({
+        date:  d.toISOString().split('T')[0],
+        label: d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }),
+      });
+    }
+    d.setDate(d.getDate() + 1);
+  }
+
+  const projectList = projectsWithTasks.map(p =>
+    `Project: "${p.name}" (priority: ${p.priority}, deadline: ${p.deadline || 'none'}, color: ${p.color})\n` +
+    p.tasks.map(t => `  Task: "${t.title}" [${t.status}]`).join('\n')
+  ).join('\n\n');
+
+  const dayLabels = workDays.map(d => `${d.label} (${d.date})`).join(', ');
+
+  const prompt = `Today is ${date}. You are a productivity coach planning the work week.
+
+Active projects and tasks:
+${projectList}
+
+Plan these 5 working days: ${dayLabels}
+
+Spread work sensibly. Prioritise by deadline urgency, project priority, task status.
+Each day should focus on 1-2 projects max.
+
+Respond ONLY with valid JSON, no markdown:
+{
+  "summary": "one sentence overview of the week's priorities",
+  "days": [
+    {
+      "date": "2026-04-17",
+      "label": "Thu 17 Apr",
+      "blocks": [
+        {
+          "project": "exact project name",
+          "color": "exact hex color",
+          "task": "exact task title",
+          "focus": "one sentence on what to do this day"
+        }
+      ]
+    }
+  ]
+}
+
+Include exactly 5 days. Use 1-2 blocks per day maximum.`;
+
+  const stopPing = openSSE(res);
+
+  try {
+    const raw = await chat(prompt, { json: true });
+    let parsed;
+    try { parsed = JSON.parse(raw); }
+    catch {
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) return sseError(res, stopPing, 'AI returned invalid response');
+      parsed = JSON.parse(match[0]);
+    }
+    sseJSON(res, stopPing, parsed);
+  } catch (err) {
+    console.error('Week plan error:', err);
+    sseError(res, stopPing, 'AI unavailable');
+  }
+});
+
 module.exports = router;

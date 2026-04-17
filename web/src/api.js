@@ -93,4 +93,5 @@ export const api = {
   suggestPriorities: ()     => streamRequest('/ai/suggest-priorities', { method: 'POST' }),
   sendWeeklyDigest:  ()     => streamRequest('/ai/weekly-digest',      { method: 'POST' }),
   getDailyPlan:      (date) => streamRequest('/ai/daily-plan',         { method: 'POST', body: JSON.stringify({ date }) }),
+  getWeekPlan:       (date) => streamRequest('/ai/week-plan',          { method: 'POST', body: JSON.stringify({ date }) }),
 };
