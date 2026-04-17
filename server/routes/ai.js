@@ -265,6 +265,71 @@ Include 3-5 blocks maximum. Use labels: "Top Priority", "Important", "If time al
   }
 });
 
+// ─── POST /api/ai/daily-digest ───────────────────────────────────────────────
+// Send today's AI plan as an email to the logged-in user (manual trigger).
+router.post('/daily-digest', async (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+  const today = new Date().toISOString().split('T')[0];
+
+  const projects = db.prepare(`
+    SELECT id, name, color, priority, deadline, status
+    FROM projects WHERE user_id = ? AND status != 'complete'
+    ORDER BY priority DESC, deadline ASC NULLS LAST
+  `).all(req.user.id);
+
+  if (!projects.length) return res.json({ ok: true, message: 'No active projects' });
+
+  const projectsWithTasks = projects.map(p => {
+    const tasks = db.prepare(
+      "SELECT t.id, t.title, t.status FROM tasks t WHERE t.project_id = ? AND t.status != 'done'"
+    ).all(p.id);
+    const withItems = tasks.map(t => {
+      const items = db.prepare(
+        'SELECT text FROM checklist_items WHERE task_id = ? AND checked = 0 ORDER BY position LIMIT 4'
+      ).all(t.id).map(i => i.text);
+      return { ...t, items };
+    }).filter(t => t.items.length > 0 || t.status === 'in-progress');
+    return { ...p, tasks: withItems };
+  }).filter(p => p.tasks.length > 0);
+
+  if (!projectsWithTasks.length) return res.json({ ok: true, message: 'Nothing pending' });
+
+  const dayLabel = new Date(today + 'T12:00:00').toLocaleDateString('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'long',
+  });
+
+  const projectList = projectsWithTasks.map(p =>
+    `Project: "${p.name}" (priority: ${p.priority}, deadline: ${p.deadline || 'none'})\n` +
+    p.tasks.map(t =>
+      `  Task: "${t.title}" [${t.status}]` +
+      (t.items.length ? `\n    Pending: ${t.items.slice(0, 3).join(' | ')}` : '')
+    ).join('\n')
+  ).join('\n\n');
+
+  const prompt = `Today is ${today} (${dayLabel}). Generate a focused daily work plan for ${user.name || user.email}.
+
+${projectList}
+
+Write a short HTML email with:
+1. A one-line motivational opener
+2. Top 3 things to focus on today (project + task + one action)
+3. A reminder of any deadlines this week
+
+Format as clean HTML with inline styles. Colors: headers #1a1a1a, accent #6366f1, action items #10b981.
+Keep it concise — readable in 30 seconds. Return only the HTML body content.`;
+
+  const stopPing = openSSE(res);
+  try {
+    const html = await chat(prompt);
+    const subject = `Your plan for ${dayLabel}`;
+    await sendMail({ to: user.email, subject, html });
+    sseJSON(res, stopPing, { ok: true, sent_to: user.email });
+  } catch (err) {
+    console.error('Daily digest error:', err);
+    sseError(res, stopPing, 'Failed to send daily digest');
+  }
+});
+
 // ─── POST /api/ai/week-plan ───────────────────────────────────────────────────
 // Returns a 5-working-day plan starting from the given date.
 router.post('/week-plan', async (req, res) => {

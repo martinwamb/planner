@@ -61,8 +61,17 @@ export default function Dashboard() {
     setAiLoading(true);
     try {
       await api.sendWeeklyDigest();
-      setAiPanel({ digest_sent: true });
+      setAiPanel({ digest_sent: 'weekly' });
     } catch { setAiPanel({ error: 'Failed to send digest.' }); }
+    finally { setAiLoading(false); }
+  }
+
+  async function handleSendDailyDigest() {
+    setAiLoading(true);
+    try {
+      await api.sendDailyDigest();
+      setAiPanel({ digest_sent: 'daily' });
+    } catch { setAiPanel({ error: 'Failed to send daily plan.' }); }
     finally { setAiLoading(false); }
   }
 
@@ -96,9 +105,13 @@ export default function Dashboard() {
                 className="text-sm text-indigo-600 hover:text-indigo-800 px-3 py-2 rounded-lg hover:bg-indigo-50 transition-colors font-medium disabled:opacity-50">
                 {aiLoading ? '…' : '✦ AI Insights'}
               </button>
+              <button onClick={handleSendDailyDigest} disabled={aiLoading}
+                className="text-sm text-gray-500 hover:text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors hidden sm:block">
+                Today's plan
+              </button>
               <button onClick={handleSendDigest} disabled={aiLoading}
                 className="text-sm text-gray-500 hover:text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors hidden sm:block">
-                Send Digest
+                Weekly digest
               </button>
               <button onClick={() => setModal('create')}
                 className="bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-xl hover:bg-gray-700 transition-colors">
@@ -155,7 +168,8 @@ export default function Dashboard() {
                   <button onClick={() => setAiPanel(null)} className="text-gray-400 hover:text-gray-600 text-sm">✕</button>
                 </div>
                 {aiPanel.error && <p className="text-sm text-rose-500">{aiPanel.error}</p>}
-                {aiPanel.digest_sent && <p className="text-sm text-emerald-600">Weekly digest sent to your email.</p>}
+                {aiPanel.digest_sent === 'weekly' && <p className="text-sm text-emerald-600">Weekly digest sent to your email.</p>}
+                {aiPanel.digest_sent === 'daily'  && <p className="text-sm text-emerald-600">Today's plan sent to your email.</p>}
                 {aiPanel.summary && <p className="text-sm text-gray-700 mb-4">{aiPanel.summary}</p>}
                 <div className="grid sm:grid-cols-3 gap-4">
                   {aiPanel.top_priority?.length > 0 && (
