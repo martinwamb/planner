@@ -31,7 +31,12 @@ function recalcProjectProgress(projectId) {
     WHERE t.project_id = ?
   `).get(projectId);
   const progress = stats.total > 0 ? Math.round((stats.checked / stats.total) * 100) : 0;
-  db.prepare("UPDATE projects SET progress = ?, updated_at = datetime('now') WHERE id = ?").run(progress, projectId);
+  const project = db.prepare('SELECT status FROM projects WHERE id = ?').get(projectId);
+  const autoStatus = project?.status === 'on-hold' ? project.status
+    : progress === 100 ? 'complete'
+    : progress > 0    ? 'active'
+    : 'planning';
+  db.prepare("UPDATE projects SET progress = ?, status = ?, updated_at = datetime('now') WHERE id = ?").run(progress, autoStatus, projectId);
   return progress;
 }
 
