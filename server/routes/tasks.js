@@ -134,10 +134,14 @@ router.put('/tasks/:id', (req, res) => {
       const insert = db.prepare('INSERT INTO checklist_items (task_id, text, checked, position) VALUES (?, ?, ?, ?)');
       checklist.forEach((item, i) => insert.run(req.params.id, item.text, item.checked ? 1 : 0, i));
     }
+    recalcTaskStatus(req.params.id);
   }
 
   const updated = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id);
-  res.json(attachChecklist([updated])[0]);
+  const project_progress = checklist !== undefined ? recalcProjectProgress(task.project_id) : undefined;
+  const payload = attachChecklist([updated])[0];
+  if (project_progress !== undefined) payload.project_progress = project_progress;
+  res.json(payload);
 });
 
 // PATCH /api/tasks/:id/status — quick status update (Kanban drag)

@@ -128,6 +128,9 @@ export default function ProjectDetail() {
     if (taskModal?.id) {
       const updated = await api.updateTask(taskModal.id, form);
       setTasks(ts => ts.map(t => t.id === updated.id ? updated : t));
+      if (updated.project_progress !== undefined) {
+        setProject(p => ({ ...p, progress: updated.project_progress }));
+      }
     } else {
       const created = await api.createTask(id, form);
       setTasks(ts => [...ts, created]);
