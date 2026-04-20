@@ -99,7 +99,7 @@ export default function ProjectDetail() {
   const [taskModal, setTaskModal] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [dragOverCol, setDragOverCol]   = useState(null);
-  const [sidebarOpen, setSidebarOpen]   = useState(true);
+  const [sidebarOpen, setSidebarOpen]   = useState(() => typeof window !== 'undefined' && window.innerWidth >= 768);
 
   useEffect(() => {
     setLoading(true);
@@ -191,25 +191,28 @@ export default function ProjectDetail() {
     <div className="h-screen bg-[#f9f8f6] flex flex-col overflow-hidden">
       {/* Header */}
       <header className="bg-white border-b border-gray-100 flex-shrink-0 z-20">
-        <div className="px-6 py-4 flex items-center gap-4">
+        <div className="px-3 sm:px-6 py-3 sm:py-4 flex items-center gap-2 sm:gap-4">
           <button onClick={() => navigate('/dashboard')}
             className="text-gray-400 hover:text-gray-600 transition-colors text-sm flex-shrink-0">
-            ← Dashboard
+            <span className="hidden sm:inline">← Dashboard</span>
+            <span className="sm:hidden">←</span>
           </button>
-          <div className="flex-1 min-w-0 flex items-center gap-3">
+          <div className="flex-1 min-w-0 flex items-center gap-2">
             <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: project.color }} />
-            <h1 className="text-base font-bold text-gray-900 truncate">{project.name}</h1>
-            <span className={`text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0 ${status.bg} ${status.text}`}>
+            <h1 className="text-sm sm:text-base font-bold text-gray-900 truncate">{project.name}</h1>
+            <span className={`text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0 hidden sm:inline-flex ${status.bg} ${status.text}`}>
               {status.label}
             </span>
           </div>
           <button onClick={() => setEditingProject(true)}
-            className="text-sm text-gray-500 hover:text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0">
-            Edit
+            className="text-sm text-gray-500 hover:text-gray-700 px-2 sm:px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0">
+            <span className="hidden sm:inline">Edit</span>
+            <span className="sm:hidden">✎</span>
           </button>
           <button onClick={() => setTaskModal('new')}
-            className="bg-gray-900 text-white text-sm font-medium px-4 py-2 rounded-xl hover:bg-gray-700 transition-colors flex-shrink-0">
-            + Add Task
+            className="bg-gray-900 text-white text-sm font-medium px-3 sm:px-4 py-2 rounded-xl hover:bg-gray-700 transition-colors flex-shrink-0">
+            <span className="hidden sm:inline">+ Add Task</span>
+            <span className="sm:hidden">+</span>
           </button>
           <button onClick={() => setSidebarOpen(o => !o)}
             className="text-gray-400 hover:text-gray-600 px-2 py-2 rounded-lg hover:bg-gray-100 transition-colors text-sm flex-shrink-0"
@@ -222,11 +225,11 @@ export default function ProjectDetail() {
       <div className="flex flex-1 min-h-0">
         {/* Main content */}
         <div className="flex-1 overflow-y-auto">
-          <div className="px-6 py-6 space-y-5">
+          <div className="px-3 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-5">
             {/* Project info bar */}
             <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
               <div className="h-1.5 w-full" style={{ backgroundColor: project.color }} />
-              <div className="px-6 py-4 flex flex-wrap gap-6 items-center">
+              <div className="px-3 sm:px-6 py-3 sm:py-4 flex flex-wrap gap-3 sm:gap-6 items-center">
                 <div className="flex items-center gap-1.5">
                   <span className={`inline-block w-2 h-2 rounded-full ${priority.dot}`} />
                   <span className="text-sm text-gray-600">{priority.label} priority</span>
@@ -236,7 +239,7 @@ export default function ProjectDetail() {
                     {deadline.overdue ? '⚠ Overdue · ' : '📅 '}{deadline.text}
                   </span>
                 )}
-                <div className="flex items-center gap-3 flex-1 min-w-48">
+                <div className="flex items-center gap-3 flex-1 min-w-0 w-full sm:w-auto sm:min-w-48">
                   <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
                     <motion.div className="h-full rounded-full" layout
                       animate={{ width: `${project.progress}%` }}

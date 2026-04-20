@@ -136,12 +136,12 @@ export default function TaskModal({ task, projectId, onSave, onClose }) {
 
           <form onSubmit={handleSubmit} className="px-6 py-5 space-y-5">
             {/* Title + status */}
-            <div className="flex gap-3">
+            <div className="flex flex-col sm:flex-row gap-3">
               <input type="text" value={form.title} onChange={e => set('title', e.target.value)}
                 placeholder="Task title" required
                 className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
               <select value={form.status} onChange={e => set('status', e.target.value)}
-                className="border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
+                className="w-full sm:w-auto border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
                 {STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
             </div>
