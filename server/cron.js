@@ -2,7 +2,7 @@ const cron = require('node-cron');
 const db = require('./db');
 const { chat } = require('./ollama');
 const { sendMail } = require('./email');
-const { enhanceAllUnenhanced } = require('./enhancer');
+const { enhanceAllUnenhanced, enhanceAllDates } = require('./enhancer');
 const { generateAndCacheDailyPlan, formatDailyEmailHtml } = require('./planHelper');
 
 // ─── Weekly digest ────────────────────────────────────────────────────────────
@@ -67,6 +67,9 @@ function scheduleDailyEnhancement() {
     try {
       // 1. Enhance any tasks that were never structured
       await enhanceAllUnenhanced();
+
+      // 2. Backfill dates for structured tasks that still have none
+      await enhanceAllDates();
 
       // 2. Top up checklist items on tasks with < 3 unchecked items
       const today = new Date().toISOString().split('T')[0];

@@ -83,17 +83,20 @@ export default function TaskModal({ task, projectId, onSave, onClose }) {
     if (!form.raw_notes.trim() && !form.title.trim()) return;
     setEnhancing(true);
     try {
-      const result = await api.enhanceTask({ notes: form.raw_notes || form.title, title: form.title });
+      const result = await api.enhanceTask({ notes: form.raw_notes || form.title, title: form.title, projectId });
       setForm(f => ({
         ...f,
-        context:  result.context  || f.context,
-        purpose:  result.purpose  || f.purpose,
-        outcome:  result.outcome  || f.outcome,
-        approach: result.approach || f.approach,
-        checklist: result.checklist
+        context:    result.context    || f.context,
+        purpose:    result.purpose    || f.purpose,
+        outcome:    result.outcome    || f.outcome,
+        approach:   result.approach   || f.approach,
+        checklist:  result.checklist
           ? result.checklist.map(text => ({ text, checked: false }))
           : f.checklist,
+        start_date: result.start_date || f.start_date,
+        due_date:   result.due_date   || f.due_date,
       }));
+      if (result.start_date || result.due_date) setDateReason('Dates suggested by AI during enhancement.');
       setTab('structured');
     } catch (err) {
       alert('AI enhancement failed: ' + (err.message || 'Unknown error'));

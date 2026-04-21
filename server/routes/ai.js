@@ -4,6 +4,7 @@ const { requireAuth } = require('../auth');
 const { chat } = require('../ollama');
 const { sendMail } = require('../email');
 const { generateAndCacheDailyPlan, formatDailyEmailHtml } = require('../planHelper');
+const { buildPrompt, getProjectContextByProjectId } = require('../enhancer');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -39,31 +40,14 @@ function sseError(res, stopPing, message) {
 
 // ─── POST /api/ai/enhance-task ───────────────────────────────────────────────
 router.post('/enhance-task', async (req, res) => {
-  const { notes, title } = req.body;
+  const { notes, title, projectId } = req.body;
   if (!notes?.trim()) return res.status(400).json({ error: 'Notes required' });
 
-  const prompt = `You are a project management assistant. Structure the following rough task notes into a clear format.
-
-Task title: ${title || 'Untitled task'}
-Rough notes: ${notes}
-
-Respond with ONLY a valid JSON object, no explanation, no markdown. Use this exact structure:
-{
-  "context": ["bullet 1 of 8-10 words", "bullet 2 of 8-10 words", "bullet 3 of 8-10 words"],
-  "purpose": ["bullet 1 of 8-10 words", "bullet 2 of 8-10 words", "bullet 3 of 8-10 words"],
-  "outcome": ["bullet 1 of 8-10 words", "bullet 2 of 8-10 words", "bullet 3 of 8-10 words"],
-  "approach": ["bullet 1 of 8-10 words", "bullet 2 of 8-10 words", "bullet 3 of 8-10 words"],
-  "checklist": ["action item 1", "action item 2", "action item 3", "action item 4", "action item 5"]
-}
-
-context = background/situation (why this task exists)
-purpose = why this task matters to the project
-outcome = what success looks like when done
-approach = how to execute, step by step thinking
-checklist = specific actionable to-do items`;
+  // Pull project deadline + sibling task dates for realistic timeline suggestion
+  const ctx = projectId ? getProjectContextByProjectId(projectId, 0) : {};
+  const prompt = buildPrompt(title || 'Untitled task', notes, ctx);
 
   const stopPing = openSSE(res);
-
   try {
     const raw = await chat(prompt, { json: true });
     let parsed;
