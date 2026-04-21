@@ -62,6 +62,33 @@ function attachChecklist(tasks) {
   }));
 }
 
+// GET /api/tasks/stats — aggregate task counts by status with per-project breakdown
+router.get('/tasks/stats', (req, res) => {
+  const rows = db.prepare(`
+    SELECT t.status, t.project_id, p.name as project_name, COUNT(*) as count
+    FROM tasks t
+    JOIN projects p ON p.id = t.project_id
+    WHERE p.user_id = ?
+    GROUP BY t.status, t.project_id
+  `).all(req.user.id);
+
+  const statuses = ['todo', 'in-progress', 'review', 'done'];
+  const result = { byProject: {} };
+  for (const s of statuses) { result[s] = 0; result.byProject[s] = []; }
+
+  for (const row of rows) {
+    if (result[row.status] !== undefined) {
+      result[row.status] += row.count;
+      result.byProject[row.status].push({
+        projectId: row.project_id,
+        projectName: row.project_name,
+        count: row.count,
+      });
+    }
+  }
+  res.json(result);
+});
+
 // GET /api/projects/:projectId/tasks
 router.get('/projects/:projectId/tasks', (req, res) => {
   if (!ownsProject(req.params.projectId, req.user.id)) return res.status(404).json({ error: 'Not found' });

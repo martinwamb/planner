@@ -23,10 +23,11 @@ export default function Dashboard() {
   const [aiPanel, setAiPanel]           = useState(null);
   const [aiLoading, setAiLoading]       = useState(false);
   const [view, setView]                 = useState('projects'); // 'projects' | 'calendar'
+  const [taskStats, setTaskStats]       = useState(null);
 
   useEffect(() => {
-    Promise.all([api.getProjects(), api.getTags()])
-      .then(([p, t]) => { setProjects(p); setTags(t); })
+    Promise.all([api.getProjects(), api.getTags(), api.getTaskStats()])
+      .then(([p, t, ts]) => { setProjects(p); setTags(t); setTaskStats(ts); })
       .finally(() => setLoading(false));
   }, []);
 
@@ -79,15 +80,10 @@ export default function Dashboard() {
   let filtered = statusFilter === 'all' ? projects : projects.filter(p => p.status === statusFilter);
   if (tagFilter) filtered = filtered.filter(p => p.tags?.some(t => t.id === tagFilter));
 
-  const stats = {
-    total:    projects.length,
-    active:   projects.filter(p => p.status === 'active').length,
-    complete: projects.filter(p => p.status === 'complete').length,
-    overdue:  projects.filter(p => {
-      if (!p.deadline || p.status === 'complete') return false;
-      return new Date(p.deadline + 'T00:00:00') < new Date();
-    }).length,
-  };
+  const PROJECT_COLORS = ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#84cc16','#f97316'];
+  const projectColorMap = {};
+  projects.forEach((p, i) => { projectColorMap[p.id] = PROJECT_COLORS[i % PROJECT_COLORS.length]; });
+  const ts = taskStats || { todo: 0, 'in-progress': 0, review: 0, done: 0, byProject: {} };
 
   return (
     <div className="min-h-screen bg-[#f9f8f6]">
@@ -146,17 +142,32 @@ export default function Dashboard() {
         {/* Stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
-            { label: 'Total',    value: stats.total,    color: 'text-gray-900' },
-            { label: 'Active',   value: stats.active,   color: 'text-blue-600' },
-            { label: 'Complete', value: stats.complete, color: 'text-emerald-600' },
-            { label: 'Overdue',  value: stats.overdue,  color: 'text-rose-500' },
+            { label: 'To Do',       key: 'todo',        color: 'text-gray-700' },
+            { label: 'In Progress', key: 'in-progress', color: 'text-blue-600' },
+            { label: 'Review',      key: 'review',      color: 'text-amber-500' },
+            { label: 'Done',        key: 'done',        color: 'text-emerald-600' },
           ].map((stat, i) => (
             <motion.div key={stat.label}
               initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.06, duration: 0.3 }}
               className="bg-white rounded-xl border border-gray-100 px-5 py-4">
               <p className="text-xs text-gray-400 font-medium uppercase tracking-wide">{stat.label}</p>
-              <p className={`text-3xl font-bold mt-1 ${stat.color}`}>{stat.value}</p>
+              <p className={`text-3xl font-bold mt-1 ${stat.color}`}>{ts[stat.key] ?? 0}</p>
+              {ts.byProject[stat.key]?.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-2.5">
+                  {ts.byProject[stat.key].map(proj => {
+                    const shortName = proj.projectName.split('|').pop().trim().slice(0, 10);
+                    const color = projectColorMap[proj.projectId] || '#6b7280';
+                    return (
+                      <span key={proj.projectId} title={`${proj.projectName}: ${proj.count} task${proj.count !== 1 ? 's' : ''}`}
+                        className="text-xs px-1.5 py-0.5 rounded font-medium leading-tight"
+                        style={{ backgroundColor: color + '18', color }}>
+                        {shortName} · {proj.count}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
             </motion.div>
           ))}
         </div>

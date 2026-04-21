@@ -81,6 +81,7 @@ export const api = {
   deleteTag:  (id)     => request(`/tags/${id}`, { method: 'DELETE' }),
 
   // Tasks
+  getTaskStats:   ()           => request('/tasks/stats'),
   getTasks:       (projectId)  => request(`/projects/${projectId}/tasks`),
   createTask:     (pid, body)  => request(`/projects/${pid}/tasks`, { method: 'POST', body: JSON.stringify(body) }),
   updateTask:     (id, body)   => request(`/tasks/${id}`,           { method: 'PUT',  body: JSON.stringify(body) }),
