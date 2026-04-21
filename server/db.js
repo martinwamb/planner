@@ -81,9 +81,9 @@ db.exec(`
   );
 `);
 
-// Migration: add user_id column to projects if it doesn't exist yet
-try {
-  db.exec(`ALTER TABLE projects ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE`);
-} catch (_) { /* column already exists */ }
+// Migrations — each wrapped in try/catch so re-runs are safe
+try { db.exec(`ALTER TABLE projects ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE`); } catch (_) {}
+try { db.exec(`ALTER TABLE tasks ADD COLUMN start_date TEXT`); } catch (_) {}
+try { db.exec(`ALTER TABLE tasks ADD COLUMN due_date TEXT`); } catch (_) {}
 
 module.exports = db;

@@ -62,6 +62,19 @@ function attachChecklist(tasks) {
   }));
 }
 
+// GET /api/tasks/timeline — all tasks with start_date or due_date set (for calendar)
+router.get('/tasks/timeline', (req, res) => {
+  const tasks = db.prepare(`
+    SELECT t.id, t.title, t.status, t.start_date, t.due_date,
+           p.id as project_id, p.name as project_name, p.color as project_color
+    FROM tasks t
+    JOIN projects p ON p.id = t.project_id
+    WHERE p.user_id = ? AND (t.due_date IS NOT NULL OR t.start_date IS NOT NULL)
+    ORDER BY t.due_date ASC, t.start_date ASC
+  `).all(req.user.id);
+  res.json(tasks);
+});
+
 // GET /api/tasks/stats — aggregate task counts by status with per-project breakdown
 router.get('/tasks/stats', (req, res) => {
   const rows = db.prepare(`
@@ -101,14 +114,14 @@ router.get('/projects/:projectId/tasks', (req, res) => {
 // POST /api/projects/:projectId/tasks
 router.post('/projects/:projectId/tasks', (req, res) => {
   if (!ownsProject(req.params.projectId, req.user.id)) return res.status(404).json({ error: 'Not found' });
-  const { title, status, context, purpose, outcome, approach, raw_notes, checklist } = req.body;
+  const { title, status, context, purpose, outcome, approach, raw_notes, checklist, start_date, due_date } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Title required' });
 
   const maxPos = db.prepare('SELECT MAX(position) as m FROM tasks WHERE project_id = ?').get(req.params.projectId);
 
   const result = db.prepare(`
-    INSERT INTO tasks (project_id, title, status, position, context, purpose, outcome, approach, raw_notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (project_id, title, status, position, context, purpose, outcome, approach, raw_notes, start_date, due_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     req.params.projectId,
     title.trim(),
@@ -118,7 +131,9 @@ router.post('/projects/:projectId/tasks', (req, res) => {
     JSON.stringify(purpose || []),
     JSON.stringify(outcome || []),
     JSON.stringify(approach || []),
-    raw_notes || ''
+    raw_notes || '',
+    start_date || null,
+    due_date || null
   );
 
   if (checklist?.length) {
@@ -140,13 +155,14 @@ router.put('/tasks/:id', (req, res) => {
   const task = db.prepare('SELECT t.* FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = ? AND p.user_id = ?').get(req.params.id, req.user.id);
   if (!task) return res.status(404).json({ error: 'Not found' });
 
-  const { title, status, position, context, purpose, outcome, approach, raw_notes, checklist } = req.body;
+  const { title, status, position, context, purpose, outcome, approach, raw_notes, checklist, start_date, due_date } = req.body;
 
   db.prepare(`
     UPDATE tasks SET
       title = ?, status = ?, position = ?,
       context = ?, purpose = ?, outcome = ?, approach = ?,
-      raw_notes = ?, updated_at = datetime('now')
+      raw_notes = ?, start_date = ?, due_date = ?,
+      updated_at = datetime('now')
     WHERE id = ?
   `).run(
     title ?? task.title,
@@ -157,6 +173,8 @@ router.put('/tasks/:id', (req, res) => {
     JSON.stringify(outcome ?? JSON.parse(task.outcome)),
     JSON.stringify(approach ?? JSON.parse(task.approach)),
     raw_notes ?? task.raw_notes,
+    start_date !== undefined ? (start_date || null) : task.start_date,
+    due_date   !== undefined ? (due_date   || null) : task.due_date,
     req.params.id
   );
 

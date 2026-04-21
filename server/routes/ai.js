@@ -217,6 +217,59 @@ router.post('/daily-digest', async (req, res) => {
   }
 });
 
+// ─── POST /api/ai/suggest-timeline ───────────────────────────────────────────
+// Given a task title + notes + project context, suggests start_date and due_date.
+router.post('/suggest-timeline', async (req, res) => {
+  const { taskTitle, taskNotes, projectId } = req.body;
+  if (!taskTitle?.trim()) return res.status(400).json({ error: 'taskTitle required' });
+
+  const today = new Date().toISOString().split('T')[0];
+
+  let projectContext = '';
+  if (projectId) {
+    const project = db.prepare('SELECT name, deadline FROM projects WHERE id = ? AND user_id = ?').get(projectId, req.user.id);
+    if (project) {
+      const otherTasks = db.prepare(
+        'SELECT title, due_date, status FROM tasks WHERE project_id = ? AND due_date IS NOT NULL ORDER BY due_date ASC'
+      ).all(projectId);
+      projectContext = `Project: "${project.name}" (deadline: ${project.deadline || 'none'})\n`;
+      if (otherTasks.length) {
+        projectContext += `Other tasks with dates:\n${otherTasks.map(t => `  "${t.title}" — due: ${t.due_date} [${t.status}]`).join('\n')}\n`;
+      }
+    }
+  }
+
+  const prompt = `Today is ${today}. Suggest a realistic timeline for this task.
+
+${projectContext}Task: "${taskTitle}"
+${taskNotes ? `Notes: ${taskNotes}` : ''}
+
+Respond ONLY with valid JSON:
+{
+  "start_date": "YYYY-MM-DD",
+  "due_date": "YYYY-MM-DD",
+  "reason": "one sentence explaining the suggested dates"
+}
+
+Rules: start_date must be today or later. due_date must be after start_date. If a project deadline exists, due_date must be on or before it. Be realistic — a small task might need 1-3 days, a complex one 1-2 weeks.`;
+
+  const stopPing = openSSE(res);
+  try {
+    const raw = await chat(prompt, { json: true });
+    let parsed;
+    try { parsed = JSON.parse(raw); }
+    catch {
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (!match) return sseError(res, stopPing, 'AI returned invalid response');
+      parsed = JSON.parse(match[0]);
+    }
+    sseJSON(res, stopPing, parsed);
+  } catch (err) {
+    console.error('Suggest timeline error:', err);
+    sseError(res, stopPing, 'AI unavailable');
+  }
+});
+
 // ─── POST /api/ai/week-plan ───────────────────────────────────────────────────
 // Returns a 5-working-day plan starting from the given date.
 router.post('/week-plan', async (req, res) => {

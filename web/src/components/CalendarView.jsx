@@ -10,7 +10,6 @@ const LABEL_COLORS = {
   'If time allows': 'bg-gray-50 border-gray-200 text-gray-600',
 };
 
-// Use LOCAL date parts — avoids UTC offset flipping the date forward/back
 function localISO(d) {
   const y  = d.getFullYear();
   const m  = String(d.getMonth() + 1).padStart(2, '0');
@@ -18,22 +17,28 @@ function localISO(d) {
   return `${y}-${m}-${dd}`;
 }
 
+function fmtDate(iso) {
+  if (!iso) return '';
+  return new Date(iso + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
 export default function CalendarView({ projects }) {
-  const today = new Date();
+  const today    = new Date();
   const todayStr = localISO(today);
   const navigate = useNavigate();
 
   const [cursor, setCursor]       = useState(new Date(today.getFullYear(), today.getMonth(), 1));
-  const [selected, setSelected]   = useState(todayStr); // auto-select today
+  const [selected, setSelected]   = useState(todayStr);
   const [plans, setPlans]         = useState({});
   const [loadingDay, setLoadingDay] = useState(null);
   const [weekPlan, setWeekPlan]   = useState(null);
   const [weekLoading, setWeekLoading] = useState(false);
-  const [panelMode, setPanelMode] = useState('day'); // 'day' | 'week'
+  const [panelMode, setPanelMode] = useState('day');
+  const [taskTimeline, setTaskTimeline] = useState([]);
 
-  // Auto-generate today's plan on mount
   useEffect(() => {
     loadDayPlan(todayStr);
+    api.getTaskTimeline().then(setTaskTimeline).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadDayPlan(key) {
@@ -80,14 +85,26 @@ export default function CalendarView({ projects }) {
   for (let i = 0; i < firstDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(year, month, d));
 
-  // Deadline dots
+  // Project deadline dots
   const deadlineMap = {};
   for (const p of projects) {
     if (p.deadline && p.status !== 'complete') {
       deadlineMap[p.deadline] = deadlineMap[p.deadline] || [];
-      deadlineMap[p.deadline].push(p.color);
+      deadlineMap[p.deadline].push({ color: p.color, type: 'project' });
     }
   }
+
+  // Task due-date dots
+  const taskDueDateMap = {};
+  for (const t of taskTimeline) {
+    if (t.due_date) {
+      taskDueDateMap[t.due_date] = taskDueDateMap[t.due_date] || [];
+      taskDueDateMap[t.due_date].push(t);
+    }
+  }
+
+  // Tasks due on selected date
+  const tasksDueSelected = selected ? (taskDueDateMap[selected] || []) : [];
 
   const plan = selected ? plans[selected] : null;
 
@@ -106,7 +123,7 @@ export default function CalendarView({ projects }) {
           </button>
         </div>
         <p className="text-xs text-gray-400">
-          {panelMode === 'day' ? 'Click a date to generate its plan' : 'AI plan for the next 5 working days'}
+          {panelMode === 'day' ? 'Click a date to see tasks & plan' : 'AI plan for the next 5 working days'}
         </p>
       </div>
 
@@ -138,8 +155,11 @@ export default function CalendarView({ projects }) {
               const key        = localISO(date);
               const isToday    = key === todayStr;
               const isSelected = key === selected;
-              const dots       = deadlineMap[key] || [];
               const isPast     = date < todayMidnight;
+              const projDots   = deadlineMap[key] || [];
+              const taskDots   = taskDueDateMap[key] || [];
+              const allDots    = [...projDots.map(d => ({ color: d.color, shape: 'circle' })),
+                                  ...taskDots.map(t => ({ color: t.project_color, shape: 'square' }))];
 
               return (
                 <button key={key} onClick={() => selectDate(date)}
@@ -150,11 +170,12 @@ export default function CalendarView({ projects }) {
                     :             'text-gray-700 hover:bg-gray-50'}`}
                 >
                   {date.getDate()}
-                  {dots.length > 0 && (
-                    <div className="flex gap-0.5 mt-0.5">
-                      {dots.slice(0, 3).map((color, j) => (
-                        <span key={j} className="w-1 h-1 rounded-full"
-                          style={{ backgroundColor: isSelected ? 'rgba(255,255,255,0.7)' : color }} />
+                  {allDots.length > 0 && (
+                    <div className="flex gap-0.5 mt-0.5 flex-wrap justify-center max-w-full px-0.5">
+                      {allDots.slice(0, 4).map((dot, j) => (
+                        <span key={j}
+                          className={dot.shape === 'square' ? 'w-1 h-1 rounded-sm' : 'w-1 h-1 rounded-full'}
+                          style={{ backgroundColor: isSelected ? 'rgba(255,255,255,0.7)' : dot.color }} />
                       ))}
                     </div>
                   )}
@@ -176,7 +197,11 @@ export default function CalendarView({ projects }) {
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-rose-400" />
-              <span className="text-xs text-gray-400">Deadline</span>
+              <span className="text-xs text-gray-400">Project deadline</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-sm bg-indigo-400" />
+              <span className="text-xs text-gray-400">Task due</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-gray-900" />
@@ -185,7 +210,7 @@ export default function CalendarView({ projects }) {
           </div>
         </div>
 
-        {/* Right panel — Day plan or Week overview */}
+        {/* Right panel */}
         <div className="lg:col-span-2">
           <AnimatePresence mode="wait">
 
@@ -201,7 +226,7 @@ export default function CalendarView({ projects }) {
                 {weekLoading ? (
                   <div className="flex flex-col items-center justify-center gap-3 py-12">
                     <div className="w-6 h-6 border-2 border-gray-200 border-t-indigo-500 rounded-full animate-spin" />
-                    <p className="text-xs text-gray-400">Generating week plan… (~6 min)</p>
+                    <p className="text-xs text-gray-400">Generating week plan…</p>
                   </div>
                 ) : (
                   <div className="divide-y divide-gray-50">
@@ -220,9 +245,6 @@ export default function CalendarView({ projects }) {
                             {b.focus && <p className="text-xs text-gray-400 mt-0.5">{b.focus}</p>}
                           </div>
                         ))}
-                        {(!day.blocks || day.blocks.length === 0) && day.focus && (
-                          <p className="text-sm text-gray-600">{day.focus}</p>
-                        )}
                       </motion.div>
                     ))}
                   </div>
@@ -235,7 +257,7 @@ export default function CalendarView({ projects }) {
               <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                 className="bg-white rounded-2xl border border-gray-100 p-6 min-h-[300px] flex flex-col items-center justify-center gap-3">
                 <div className="w-6 h-6 border-2 border-gray-200 border-t-indigo-500 rounded-full animate-spin" />
-                <p className="text-xs text-gray-400">Generating plan… (~6 min)</p>
+                <p className="text-xs text-gray-400">Generating plan…</p>
               </motion.div>
             )}
 
@@ -243,6 +265,7 @@ export default function CalendarView({ projects }) {
             {panelMode === 'day' && loadingDay !== selected && plan && (
               <motion.div key={selected} initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}
                 className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+                {/* Date header */}
                 <div className="px-5 py-4 border-b border-gray-50">
                   <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-0.5">
                     {new Date(selected + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}
@@ -250,50 +273,79 @@ export default function CalendarView({ projects }) {
                   {plan.summary && <p className="text-sm text-gray-700 leading-relaxed">{plan.summary}</p>}
                   {plan.error   && <p className="text-sm text-rose-500">{plan.error}</p>}
                 </div>
+
+                {/* Tasks due on this date */}
+                {tasksDueSelected.length > 0 && (
+                  <div className="px-5 py-3 border-b border-gray-50 space-y-2">
+                    <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Due today</p>
+                    {tasksDueSelected.map(t => (
+                      <button key={t.id}
+                        onClick={() => navigate(`/projects/${t.project_id}?openTask=${t.id}`)}
+                        className="w-full text-left flex items-center gap-2 p-2 rounded-lg hover:bg-gray-50 transition-colors group">
+                        <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{ backgroundColor: t.project_color }} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-800 truncate">{t.title}</p>
+                          <p className="text-xs text-gray-400 truncate">{t.project_name}</p>
+                        </div>
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full flex-shrink-0 ${
+                          t.status === 'done'        ? 'bg-emerald-50 text-emerald-600' :
+                          t.status === 'in-progress' ? 'bg-blue-50 text-blue-600' :
+                          t.status === 'review'      ? 'bg-amber-50 text-amber-600' :
+                                                       'bg-gray-100 text-gray-500'}`}>
+                          {t.status}
+                        </span>
+                        <span className="text-xs text-indigo-400 opacity-0 group-hover:opacity-100">→</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* AI plan blocks */}
                 <div className="divide-y divide-gray-50">
                   {plan.blocks?.map((block, i) => {
                     const clickable = block.project_id && block.task_id;
                     return (
-                    <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.07 }}
-                      onClick={clickable ? () => navigate(`/projects/${block.project_id}?openTask=${block.task_id}`) : undefined}
-                      className={`px-5 py-4 space-y-2 ${clickable ? 'cursor-pointer hover:bg-indigo-50/50 transition-colors' : ''}`}>
-                      <div className="flex items-center gap-2">
-                        <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${LABEL_COLORS[block.label] || 'bg-gray-50 border-gray-200 text-gray-600'}`}>
-                          {block.label}
-                        </span>
-                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: block.color }} />
-                        <span className="text-xs text-gray-500 truncate">{block.project}</span>
-                        {clickable && <span className="text-xs text-indigo-400 ml-auto flex-shrink-0">Open →</span>}
-                      </div>
-                      <p className="text-sm font-semibold text-gray-900">{block.task}</p>
-                      {block.items?.length > 0 && (
-                        <ul className="space-y-1">
-                          {block.items.map((item, j) => (
-                            <li key={j} className="flex items-start gap-2 text-xs text-gray-600">
-                              <span className="text-gray-300 flex-shrink-0 mt-0.5">—</span>
-                              {item}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                      {block.reason && <p className="text-xs text-gray-400 italic">{block.reason}</p>}
-                    </motion.div>
-                  )})}
+                      <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: i * 0.07 }}
+                        onClick={clickable ? () => navigate(`/projects/${block.project_id}?openTask=${block.task_id}`) : undefined}
+                        className={`px-5 py-4 space-y-2 ${clickable ? 'cursor-pointer hover:bg-indigo-50/50 transition-colors' : ''}`}>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${LABEL_COLORS[block.label] || 'bg-gray-50 border-gray-200 text-gray-600'}`}>
+                            {block.label}
+                          </span>
+                          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: block.color }} />
+                          <span className="text-xs text-gray-500 truncate">{block.project}</span>
+                          {clickable && <span className="text-xs text-indigo-400 ml-auto flex-shrink-0">Open →</span>}
+                        </div>
+                        <p className="text-sm font-semibold text-gray-900">{block.task}</p>
+                        {block.items?.length > 0 && (
+                          <ul className="space-y-1">
+                            {block.items.map((item, j) => (
+                              <li key={j} className="flex items-start gap-2 text-xs text-gray-600">
+                                <span className="text-gray-300 flex-shrink-0 mt-0.5">—</span>
+                                {item}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {block.reason && <p className="text-xs text-gray-400 italic">{block.reason}</p>}
+                      </motion.div>
+                    );
+                  })}
                 </div>
-                {plan.blocks?.length === 0 && !plan.error && (
-                  <div className="px-5 py-8 text-center text-sm text-gray-400">Nothing specific planned for this day.</div>
+                {plan.blocks?.length === 0 && tasksDueSelected.length === 0 && !plan.error && (
+                  <div className="px-5 py-8 text-center text-sm text-gray-400">Nothing scheduled for this day.</div>
                 )}
               </motion.div>
             )}
 
-            {/* ── DAY PLAN empty (no date selected somehow) ── */}
+            {/* ── DAY PLAN empty ── */}
             {panelMode === 'day' && loadingDay !== selected && !plan && (
               <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                 className="bg-white rounded-2xl border border-gray-100 p-6 h-full flex flex-col items-center justify-center text-center min-h-[300px]">
                 <p className="text-3xl mb-3">📅</p>
                 <p className="text-sm font-medium text-gray-700 mb-1">Select a date</p>
-                <p className="text-xs text-gray-400">AI will generate a focused plan for that day.</p>
+                <p className="text-xs text-gray-400">See tasks due and AI-generated focus plan.</p>
               </motion.div>
             )}
 

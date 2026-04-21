@@ -4,6 +4,7 @@ import { api } from '../api';
 
 const EMPTY = {
   title: '', status: 'todo', raw_notes: '',
+  start_date: '', due_date: '',
   context: [], purpose: [], outcome: [], approach: [], checklist: [],
 };
 
@@ -22,23 +23,27 @@ const STATUSES = [
 ];
 
 export default function TaskModal({ task, projectId, onSave, onClose }) {
-  const [form, setForm]       = useState(EMPTY);
-  const [saving, setSaving]   = useState(false);
-  const [enhancing, setEnhancing] = useState(false);
-  const [newCheck, setNewCheck]   = useState('');
-  const [tab, setTab]         = useState('structured'); // 'structured' | 'notes'
+  const [form, setForm]               = useState(EMPTY);
+  const [saving, setSaving]           = useState(false);
+  const [enhancing, setEnhancing]     = useState(false);
+  const [suggestingDates, setSuggestingDates] = useState(false);
+  const [dateReason, setDateReason]   = useState('');
+  const [newCheck, setNewCheck]       = useState('');
+  const [tab, setTab]                 = useState('structured'); // 'structured' | 'notes'
 
   useEffect(() => {
     if (task) {
       setForm({
-        title:     task.title || '',
-        status:    task.status || 'todo',
-        raw_notes: task.raw_notes || '',
-        context:   [...(task.context  || [])],
-        purpose:   [...(task.purpose  || [])],
-        outcome:   [...(task.outcome  || [])],
-        approach:  [...(task.approach || [])],
-        checklist: task.checklist?.map(c => ({ ...c })) || [],
+        title:      task.title || '',
+        status:     task.status || 'todo',
+        raw_notes:  task.raw_notes || '',
+        start_date: task.start_date || '',
+        due_date:   task.due_date || '',
+        context:    [...(task.context  || [])],
+        purpose:    [...(task.purpose  || [])],
+        outcome:    [...(task.outcome  || [])],
+        approach:   [...(task.approach || [])],
+        checklist:  task.checklist?.map(c => ({ ...c })) || [],
       });
       if (task.context?.length || task.purpose?.length) setTab('structured');
       else setTab('notes');
@@ -55,13 +60,8 @@ export default function TaskModal({ task, projectId, onSave, onClose }) {
     });
   }
 
-  function addBullet(section) {
-    setForm(f => ({ ...f, [section]: [...f[section], ''] }));
-  }
-
-  function removeBullet(section, idx) {
-    setForm(f => ({ ...f, [section]: f[section].filter((_, i) => i !== idx) }));
-  }
+  function addBullet(section) { setForm(f => ({ ...f, [section]: [...f[section], ''] })); }
+  function removeBullet(section, idx) { setForm(f => ({ ...f, [section]: f[section].filter((_, i) => i !== idx) })); }
 
   function addCheckItem() {
     if (!newCheck.trim()) return;
@@ -77,9 +77,7 @@ export default function TaskModal({ task, projectId, onSave, onClose }) {
     });
   }
 
-  function removeCheck(idx) {
-    setForm(f => ({ ...f, checklist: f.checklist.filter((_, i) => i !== idx) }));
-  }
+  function removeCheck(idx) { setForm(f => ({ ...f, checklist: f.checklist.filter((_, i) => i !== idx) })); }
 
   async function handleEnhance() {
     if (!form.raw_notes.trim() && !form.title.trim()) return;
@@ -104,18 +102,35 @@ export default function TaskModal({ task, projectId, onSave, onClose }) {
     }
   }
 
+  async function handleSuggestDates() {
+    if (!form.title.trim()) return;
+    setSuggestingDates(true);
+    setDateReason('');
+    try {
+      const result = await api.suggestTimeline({
+        taskTitle: form.title,
+        taskNotes: form.raw_notes,
+        projectId,
+      });
+      if (result.start_date) set('start_date', result.start_date);
+      if (result.due_date)   set('due_date',   result.due_date);
+      if (result.reason)     setDateReason(result.reason);
+    } catch (err) {
+      alert('Could not suggest dates: ' + (err.message || 'AI unavailable'));
+    } finally {
+      setSuggestingDates(false);
+    }
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     if (!form.title.trim()) return;
     setSaving(true);
-    try {
-      await onSave(form);
-    } finally {
-      setSaving(false);
-    }
+    try { await onSave(form); }
+    finally { setSaving(false); }
   }
 
-  const checkDone = form.checklist.filter(c => c.checked).length;
+  const checkDone  = form.checklist.filter(c => c.checked).length;
   const checkTotal = form.checklist.length;
 
   return (
@@ -144,6 +159,33 @@ export default function TaskModal({ task, projectId, onSave, onClose }) {
                 className="w-full sm:w-auto border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white">
                 {STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
+            </div>
+
+            {/* Dates */}
+            <div className="border border-gray-100 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-800">Timeline</span>
+                <button type="button" onClick={handleSuggestDates}
+                  disabled={suggestingDates || !form.title.trim()}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1 disabled:opacity-50">
+                  {suggestingDates ? '✦ Thinking…' : '✦ Suggest with AI'}
+                </button>
+              </div>
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label className="text-xs text-gray-400 mb-1 block">Start date</label>
+                  <input type="date" value={form.start_date} onChange={e => set('start_date', e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+                </div>
+                <div className="flex-1">
+                  <label className="text-xs text-gray-400 mb-1 block">Due date</label>
+                  <input type="date" value={form.due_date} onChange={e => set('due_date', e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+                </div>
+              </div>
+              {dateReason && (
+                <p className="text-xs text-indigo-500 italic">{dateReason}</p>
+              )}
             </div>
 
             {/* Tab switcher */}

@@ -37,7 +37,24 @@ function TaskCard({ task, onEdit, onDelete, onStatusChange, onChecklistToggle })
         </div>
       </div>
 
-      {hasBullets && <p className="text-xs text-indigo-400 mb-2">Structured</p>}
+      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+        {hasBullets && <p className="text-xs text-indigo-400">Structured</p>}
+        {task.due_date && (() => {
+          const due = new Date(task.due_date + 'T12:00:00');
+          const today = new Date(); today.setHours(0,0,0,0);
+          const overdue = due < today && task.status !== 'done';
+          const soon    = !overdue && (due - today) / 86400000 <= 2;
+          const label   = due.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+          return (
+            <span className={`text-xs px-1.5 py-0.5 rounded-md font-medium ${
+              overdue ? 'bg-rose-50 text-rose-500' :
+              soon    ? 'bg-amber-50 text-amber-600' :
+                        'bg-gray-50 text-gray-400'}`}>
+              📅 {label}
+            </span>
+          );
+        })()}
+      </div>
 
       {checkTotal > 0 && (
         <div className="space-y-1.5 mb-2">

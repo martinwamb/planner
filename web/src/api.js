@@ -81,7 +81,8 @@ export const api = {
   deleteTag:  (id)     => request(`/tags/${id}`, { method: 'DELETE' }),
 
   // Tasks
-  getTaskStats:   ()           => request('/tasks/stats'),
+  getTaskStats:    ()          => request('/tasks/stats'),
+  getTaskTimeline: ()          => request('/tasks/timeline'),
   getTasks:       (projectId)  => request(`/projects/${projectId}/tasks`),
   createTask:     (pid, body)  => request(`/projects/${pid}/tasks`, { method: 'POST', body: JSON.stringify(body) }),
   updateTask:     (id, body)   => request(`/tasks/${id}`,           { method: 'PUT',  body: JSON.stringify(body) }),
@@ -90,6 +91,7 @@ export const api = {
   toggleChecklist:(id, checked)=> request(`/checklist/${id}`,       { method: 'PATCH', body: JSON.stringify({ checked }) }),
 
   // AI — all use SSE streaming so the connection stays alive during long generations
+  suggestTimeline:   (body) => streamRequest('/ai/suggest-timeline',   { method: 'POST', body: JSON.stringify(body) }),
   enhanceTask:       (body) => streamRequest('/ai/enhance-task',       { method: 'POST', body: JSON.stringify(body) }),
   suggestPriorities: ()     => streamRequest('/ai/suggest-priorities', { method: 'POST' }),
   sendWeeklyDigest:  ()     => streamRequest('/ai/weekly-digest',      { method: 'POST' }),
