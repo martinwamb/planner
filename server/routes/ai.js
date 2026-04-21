@@ -3,6 +3,7 @@ const db = require('../db');
 const { requireAuth } = require('../auth');
 const { chat } = require('../ollama');
 const { sendMail } = require('../email');
+const { generateAndCacheDailyPlan, formatDailyEmailHtml } = require('../planHelper');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -185,105 +186,10 @@ Return only the HTML body content.`;
 router.post('/daily-plan', async (req, res) => {
   const { date } = req.body;
   if (!date) return res.status(400).json({ error: 'Date required' });
-
-  // Check DB cache first — only regenerate for a new day
-  const cached = db.prepare('SELECT plan_json FROM daily_plans WHERE user_id = ? AND date = ?').get(req.user.id, date);
-  if (cached) {
-    const stopPing = openSSE(res);
-    return sseJSON(res, stopPing, JSON.parse(cached.plan_json));
-  }
-
-  const projects = db.prepare(`
-    SELECT id, name, color, priority, deadline, status
-    FROM projects WHERE user_id = ? AND status != 'complete'
-    ORDER BY priority DESC, deadline ASC NULLS LAST
-  `).all(req.user.id);
-
-  if (!projects.length) return res.json({ summary: 'No active projects.', blocks: [] });
-
-  const projectsWithTasks = projects.map(p => {
-    const tasks = db.prepare(`
-      SELECT t.id, t.title, t.status, t.context, t.purpose, t.approach
-      FROM tasks t WHERE t.project_id = ? AND t.status != 'done'
-    `).all(p.id);
-
-    const tasksWithItems = tasks.map(t => {
-      const items = db.prepare(
-        'SELECT text FROM checklist_items WHERE task_id = ? AND checked = 0 ORDER BY position ASC LIMIT 6'
-      ).all(t.id).map(i => i.text);
-      return { ...t, pending_items: items };
-    }).filter(t => t.pending_items.length > 0 || t.status === 'in-progress');
-
-    return { ...p, tasks: tasksWithItems };
-  }).filter(p => p.tasks.length > 0);
-
-  if (!projectsWithTasks.length) {
-    return res.json({ summary: 'All checklist items are complete. Great work!', blocks: [] });
-  }
-
-  const projectList = projectsWithTasks.map(p =>
-    `Project: "${p.name}" (priority: ${p.priority}, deadline: ${p.deadline || 'none'}, color: ${p.color})\n` +
-    p.tasks.map(t =>
-      `  Task: "${t.title}" [${t.status}]\n` +
-      (t.pending_items.length ? `    Pending items: ${t.pending_items.slice(0, 4).join(' | ')}` : '')
-    ).join('\n')
-  ).join('\n\n');
-
-  const prompt = `Today is ${date}. You are a productivity coach planning someone's workday.
-
-Active projects and their pending work:
-${projectList}
-
-Create a focused daily plan. Prioritise by: deadline urgency, task already in-progress, project priority.
-Spread work across at most 3 projects. Keep it realistic for one day.
-
-Respond ONLY with valid JSON, no markdown:
-{
-  "summary": "one encouraging sentence about what to focus on today",
-  "blocks": [
-    {
-      "label": "Top Priority",
-      "project": "exact project name",
-      "color": "exact hex color from above",
-      "task": "exact task title",
-      "items": ["specific checklist item to do today", "another item"],
-      "reason": "one short sentence why this is important today"
-    }
-  ]
-}
-
-Include 3-5 blocks maximum. Use labels: "Top Priority", "Important", "If time allows".`;
-
   const stopPing = openSSE(res);
-
   try {
-    const raw = await chat(prompt, { json: true });
-    let parsed;
-    try { parsed = JSON.parse(raw); }
-    catch {
-      const match = raw.match(/\{[\s\S]*\}/);
-      if (!match) return sseError(res, stopPing, 'AI returned invalid response');
-      parsed = JSON.parse(match[0]);
-    }
-
-    // Enrich blocks with project_id and task_id for clickable navigation
-    if (parsed.blocks) {
-      for (const block of parsed.blocks) {
-        const proj = projects.find(p => p.name.toLowerCase() === block.project?.toLowerCase());
-        if (proj) {
-          block.project_id = proj.id;
-          const task = db.prepare('SELECT id FROM tasks WHERE project_id = ? AND title = ? LIMIT 1').get(proj.id, block.task);
-          if (task) block.task_id = task.id;
-        }
-      }
-    }
-
-    // Persist so plan survives page refresh until tomorrow
-    try {
-      db.prepare('INSERT OR REPLACE INTO daily_plans (user_id, date, plan_json) VALUES (?, ?, ?)').run(req.user.id, date, JSON.stringify(parsed));
-    } catch (e) { console.warn('Could not persist daily plan:', e.message); }
-
-    sseJSON(res, stopPing, parsed);
+    const plan = await generateAndCacheDailyPlan(req.user.id, date);
+    sseJSON(res, stopPing, plan);
   } catch (err) {
     console.error('Daily plan error:', err);
     sseError(res, stopPing, 'AI unavailable');
@@ -291,63 +197,19 @@ Include 3-5 blocks maximum. Use labels: "Top Priority", "Important", "If time al
 });
 
 // ─── POST /api/ai/daily-digest ───────────────────────────────────────────────
-// Send today's AI plan as an email to the logged-in user (manual trigger).
+// Sends today's plan email — reuses the same cached plan shown in the calendar
+// so the email and the app always show identical tasks.
 router.post('/daily-digest', async (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   const today = new Date().toISOString().split('T')[0];
-
-  const projects = db.prepare(`
-    SELECT id, name, color, priority, deadline, status
-    FROM projects WHERE user_id = ? AND status != 'complete'
-    ORDER BY priority DESC, deadline ASC NULLS LAST
-  `).all(req.user.id);
-
-  if (!projects.length) return res.json({ ok: true, message: 'No active projects' });
-
-  const projectsWithTasks = projects.map(p => {
-    const tasks = db.prepare(
-      "SELECT t.id, t.title, t.status FROM tasks t WHERE t.project_id = ? AND t.status != 'done'"
-    ).all(p.id);
-    const withItems = tasks.map(t => {
-      const items = db.prepare(
-        'SELECT text FROM checklist_items WHERE task_id = ? AND checked = 0 ORDER BY position LIMIT 4'
-      ).all(t.id).map(i => i.text);
-      return { ...t, items };
-    }).filter(t => t.items.length > 0 || t.status === 'in-progress');
-    return { ...p, tasks: withItems };
-  }).filter(p => p.tasks.length > 0);
-
-  if (!projectsWithTasks.length) return res.json({ ok: true, message: 'Nothing pending' });
-
   const dayLabel = new Date(today + 'T12:00:00').toLocaleDateString('en-GB', {
     weekday: 'long', day: 'numeric', month: 'long',
   });
-
-  const projectList = projectsWithTasks.map(p =>
-    `Project: "${p.name}" (priority: ${p.priority}, deadline: ${p.deadline || 'none'})\n` +
-    p.tasks.map(t =>
-      `  Task: "${t.title}" [${t.status}]` +
-      (t.items.length ? `\n    Pending: ${t.items.slice(0, 3).join(' | ')}` : '')
-    ).join('\n')
-  ).join('\n\n');
-
-  const prompt = `Today is ${today} (${dayLabel}). Generate a focused daily work plan for ${user.name || user.email}.
-
-${projectList}
-
-Write a short HTML email with:
-1. A one-line motivational opener
-2. Top 3 things to focus on today (project + task + one action)
-3. A reminder of any deadlines this week
-
-Format as clean HTML with inline styles. Colors: headers #1a1a1a, accent #6366f1, action items #10b981.
-Keep it concise — readable in 30 seconds. Return only the HTML body content.`;
-
   const stopPing = openSSE(res);
   try {
-    const html = await chat(prompt);
-    const subject = `Your plan for ${dayLabel}`;
-    await sendMail({ to: user.email, subject, html });
+    const plan = await generateAndCacheDailyPlan(req.user.id, today);
+    const html  = formatDailyEmailHtml(plan, dayLabel);
+    await sendMail({ to: user.email, subject: `Your plan for ${dayLabel}`, html });
     sseJSON(res, stopPing, { ok: true, sent_to: user.email });
   } catch (err) {
     console.error('Daily digest error:', err);

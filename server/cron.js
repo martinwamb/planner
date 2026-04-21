@@ -3,6 +3,7 @@ const db = require('./db');
 const { chat } = require('./ollama');
 const { sendMail } = require('./email');
 const { enhanceAllUnenhanced } = require('./enhancer');
+const { generateAndCacheDailyPlan, formatDailyEmailHtml } = require('./planHelper');
 
 // ─── Weekly digest ────────────────────────────────────────────────────────────
 function scheduleWeeklyDigest() {
@@ -138,74 +139,26 @@ Respond ONLY with valid JSON: {"items": ["action one", "action two", "action thr
 }
 
 // ─── Daily plan email ─────────────────────────────────────────────────────────
-// Runs every weekday at 07:30. Generates today's AI plan and emails it
-// to each user so they can see priorities before starting work.
+// Runs every weekday at 07:30. Uses the same cached plan as the calendar view
+// so the email always matches what the user sees in the app.
 function scheduleDailyPlanEmail() {
   cron.schedule('30 7 * * 1-5', async () => {
     console.log('[cron] Sending daily plan emails...');
-    try {
-      const users = db.prepare('SELECT * FROM users').all();
-      const today = new Date().toISOString().split('T')[0];
-
-      for (const user of users) {
-        const projects = db.prepare(`
-          SELECT id, name, color, priority, deadline, status
-          FROM projects WHERE user_id = ? AND status != 'complete'
-          ORDER BY priority DESC, deadline ASC NULLS LAST
-        `).all(user.id);
-
-        if (!projects.length) continue;
-
-        const projectsWithTasks = projects.map(p => {
-          const tasks = db.prepare(
-            "SELECT t.id, t.title, t.status FROM tasks t WHERE t.project_id = ? AND t.status != 'done'"
-          ).all(p.id);
-          const withItems = tasks.map(t => {
-            const items = db.prepare(
-              'SELECT text FROM checklist_items WHERE task_id = ? AND checked = 0 ORDER BY position LIMIT 4'
-            ).all(t.id).map(i => i.text);
-            return { ...t, items };
-          }).filter(t => t.items.length > 0 || t.status === 'in-progress');
-          return { ...p, tasks: withItems };
-        }).filter(p => p.tasks.length > 0);
-
-        if (!projectsWithTasks.length) continue;
-
-        const projectList = projectsWithTasks.map(p =>
-          `Project: "${p.name}" (priority: ${p.priority}, deadline: ${p.deadline || 'none'}, color: ${p.color})\n` +
-          p.tasks.map(t =>
-            `  Task: "${t.title}" [${t.status}]` +
-            (t.items.length ? `\n    Pending: ${t.items.slice(0, 3).join(' | ')}` : '')
-          ).join('\n')
-        ).join('\n\n');
-
-        const dayLabel = new Date(today + 'T12:00:00').toLocaleDateString('en-GB', {
-          weekday: 'long', day: 'numeric', month: 'long',
-        });
-
-        const prompt = `Today is ${today} (${dayLabel}). Generate a focused daily work plan for ${user.name || user.email}.
-
-${projectList}
-
-Write a short HTML email with:
-1. A one-line motivational opener
-2. Top 3 things to focus on today (project + task + one action)
-3. A reminder of any deadlines this week
-
-Format as clean HTML with inline styles. Colors: headers #1a1a1a, accent #6366f1, action items #10b981.
-Keep it concise — readable in 30 seconds. Return only the HTML body content.`;
-
-        try {
-          const html = await chat(prompt);
-          const subject = `Your plan for ${dayLabel}`;
-          await sendMail({ to: user.email, subject, html });
-          console.log(`[cron] Daily plan email sent to ${user.email}`);
-        } catch (err) {
-          console.error(`[cron] Daily plan email failed for ${user.email}:`, err.message);
-        }
+    const users = db.prepare('SELECT * FROM users').all();
+    const today = new Date().toISOString().split('T')[0];
+    const dayLabel = new Date(today + 'T12:00:00').toLocaleDateString('en-GB', {
+      weekday: 'long', day: 'numeric', month: 'long',
+    });
+    for (const user of users) {
+      try {
+        const plan = await generateAndCacheDailyPlan(user.id, today);
+        if (!plan.blocks?.length) continue;
+        const html = formatDailyEmailHtml(plan, dayLabel);
+        await sendMail({ to: user.email, subject: `Your plan for ${dayLabel}`, html });
+        console.log(`[cron] Daily plan email sent to ${user.email}`);
+      } catch (err) {
+        console.error(`[cron] Daily plan email failed for ${user.email}:`, err.message);
       }
-    } catch (err) {
-      console.error('[cron] Daily plan email job failed:', err);
     }
   });
   console.log('[cron] Daily plan email scheduled for weekdays at 07:30');
