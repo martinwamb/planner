@@ -68,12 +68,23 @@ export const api = {
   register:     (body)  => request('/auth/register', { method: 'POST', body: JSON.stringify(body) }),
   logout:       ()      => request('/auth/logout',   { method: 'POST' }),
 
+  // Workspaces
+  getWorkspaces:      ()         => request('/workspaces'),
+  createWorkspace:    (body)     => request('/workspaces',       { method: 'POST',   body: JSON.stringify(body) }),
+  updateWorkspace:    (id, body) => request(`/workspaces/${id}`, { method: 'PUT',    body: JSON.stringify(body) }),
+  deleteWorkspace:    (id)       => request(`/workspaces/${id}`, { method: 'DELETE' }),
+  getWorkspaceMembers:(id)       => request(`/workspaces/${id}/members`),
+  removeMember:       (wsId, userId) => request(`/workspaces/${wsId}/members/${userId}`, { method: 'DELETE' }),
+  inviteMember:       (wsId, email)  => request(`/workspaces/${wsId}/invite`, { method: 'POST', body: JSON.stringify({ email }) }),
+  getInvite:          (token)    => request(`/workspaces/invite/${token}`),
+  acceptInvite:       (token)    => request(`/workspaces/invite/${token}/accept`, { method: 'POST' }),
+
   // Projects
-  getProjects:    ()       => request('/projects'),
-  getProject:     (id)     => request(`/projects/${id}`),
-  createProject:  (body)   => request('/projects',    { method: 'POST', body: JSON.stringify(body) }),
-  updateProject:  (id, b)  => request(`/projects/${id}`, { method: 'PUT', body: JSON.stringify(b) }),
-  deleteProject:  (id)     => request(`/projects/${id}`, { method: 'DELETE' }),
+  getProjects:    (workspaceId) => request(workspaceId ? `/projects?workspace_id=${workspaceId}` : '/projects'),
+  getProject:     (id)          => request(`/projects/${id}`),
+  createProject:  (body)        => request('/projects',    { method: 'POST', body: JSON.stringify(body) }),
+  updateProject:  (id, b)       => request(`/projects/${id}`, { method: 'PUT', body: JSON.stringify(b) }),
+  deleteProject:  (id)          => request(`/projects/${id}`, { method: 'DELETE' }),
 
   // Tags
   getTags:    ()       => request('/tags'),

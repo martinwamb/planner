@@ -18,6 +18,7 @@ app.use('/api/projects', require('./routes/projects'));
 app.use('/api/tags', require('./routes/tags'));
 app.use('/api', require('./routes/tasks'));
 app.use('/api/ai', require('./routes/ai'));
+app.use('/api/workspaces', require('./routes/workspaces'));
 
 scheduleWeeklyDigest();
 scheduleDailyEnhancement();

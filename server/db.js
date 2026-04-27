@@ -86,4 +86,57 @@ try { db.exec(`ALTER TABLE projects ADD COLUMN user_id INTEGER REFERENCES users(
 try { db.exec(`ALTER TABLE tasks ADD COLUMN start_date TEXT`); } catch (_) {}
 try { db.exec(`ALTER TABLE tasks ADD COLUMN due_date TEXT`); } catch (_) {}
 
+// Task summary v2 — SMART problem statement + 4-quadrant analysis
+try { db.exec(`ALTER TABLE tasks ADD COLUMN problem_statement TEXT DEFAULT ''`); } catch (_) {}
+try { db.exec(`ALTER TABLE tasks ADD COLUMN quadrant_quick_win TEXT DEFAULT '[]'`); } catch (_) {}
+try { db.exec(`ALTER TABLE tasks ADD COLUMN quadrant_fill_in    TEXT DEFAULT '[]'`); } catch (_) {}
+try { db.exec(`ALTER TABLE tasks ADD COLUMN quadrant_big_bet    TEXT DEFAULT '[]'`); } catch (_) {}
+try { db.exec(`ALTER TABLE tasks ADD COLUMN quadrant_avoid      TEXT DEFAULT '[]'`); } catch (_) {}
+
+// Workspaces
+db.exec(`
+  CREATE TABLE IF NOT EXISTS workspaces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    color TEXT DEFAULT '#6366f1',
+    created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS workspace_members (
+    workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT DEFAULT 'member',
+    joined_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (workspace_id, user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS workspace_invites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    token TEXT UNIQUE NOT NULL,
+    invited_by INTEGER NOT NULL REFERENCES users(id),
+    expires_at TEXT NOT NULL,
+    accepted_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+`);
+try { db.exec(`ALTER TABLE projects ADD COLUMN workspace_id INTEGER REFERENCES workspaces(id) ON DELETE SET NULL`); } catch (_) {}
+
+// Auto-create a Personal workspace for each user who doesn't have one yet,
+// and assign their existing projects to it.
+const unhoused = db.prepare(`
+  SELECT DISTINCT u.id FROM users u
+  WHERE NOT EXISTS (SELECT 1 FROM workspace_members wm WHERE wm.user_id = u.id)
+`).all();
+for (const u of unhoused) {
+  const ws = db.prepare(
+    `INSERT INTO workspaces (name, description, color, created_by) VALUES ('Personal', 'My personal workspace', '#6366f1', ?)`
+  ).run(u.id);
+  db.prepare(`INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, 'owner')`).run(ws.lastInsertRowid, u.id);
+  db.prepare(`UPDATE projects SET workspace_id = ? WHERE user_id = ? AND workspace_id IS NULL`).run(ws.lastInsertRowid, u.id);
+}
+
 module.exports = db;

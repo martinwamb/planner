@@ -12,31 +12,92 @@ const FILTER_OPTIONS = [{ value: 'all', label: 'All' }, ...STATUSES];
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
-  const [projects, setProjects]   = useState([]);
-  const [tags, setTags]           = useState([]);
-  const [loading, setLoading]     = useState(true);
-  const [modal, setModal]         = useState(null);
+  const [projects, setProjects]         = useState([]);
+  const [tags, setTags]                 = useState([]);
+  const [loading, setLoading]           = useState(true);
+  const [modal, setModal]               = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [statusFilter, setStatusFilter] = useState('all');
   const [tagFilter, setTagFilter]       = useState(null);
   const [showTagMgr, setShowTagMgr]     = useState(false);
   const [aiPanel, setAiPanel]           = useState(null);
   const [aiLoading, setAiLoading]       = useState(false);
-  const [view, setView]                 = useState('projects'); // 'projects' | 'calendar'
+  const [view, setView]                 = useState('projects');
   const [taskStats, setTaskStats]       = useState(null);
+  const [workspaces, setWorkspaces]     = useState([]);
+  const [activeWs, setActiveWs]         = useState(null); // null = all
+  const [showWsModal, setShowWsModal]   = useState(false);
+  const [wsForm, setWsForm]             = useState({ name: '', color: '#6366f1' });
+  const [showMembers, setShowMembers]   = useState(false);
+  const [members, setMembers]           = useState({ members: [], invites: [] });
+  const [inviteEmail, setInviteEmail]   = useState('');
+  const [inviting, setInviting]         = useState(false);
 
   useEffect(() => {
-    Promise.all([api.getProjects(), api.getTags(), api.getTaskStats()])
-      .then(([p, t, ts]) => { setProjects(p); setTags(t); setTaskStats(ts); })
+    Promise.all([api.getWorkspaces(), api.getTags(), api.getTaskStats()])
+      .then(([ws, t, ts]) => {
+        setWorkspaces(ws);
+        setTags(t);
+        setTaskStats(ts);
+        // Default to first workspace
+        const first = ws[0] || null;
+        setActiveWs(first);
+        return api.getProjects(first?.id);
+      })
+      .then(p => setProjects(p))
       .finally(() => setLoading(false));
   }, []);
+
+  async function switchWorkspace(ws) {
+    setActiveWs(ws);
+    setStatusFilter('all');
+    setTagFilter(null);
+    setLoading(true);
+    const p = await api.getProjects(ws?.id);
+    setProjects(p);
+    const ts = await api.getTaskStats();
+    setTaskStats(ts);
+    setLoading(false);
+  }
+
+  async function createWorkspace() {
+    if (!wsForm.name.trim()) return;
+    const ws = await api.createWorkspace(wsForm);
+    setWorkspaces(prev => [...prev, ws]);
+    setShowWsModal(false);
+    setWsForm({ name: '', color: '#6366f1' });
+    switchWorkspace(ws);
+  }
+
+  async function loadMembers(ws) {
+    const data = await api.getWorkspaceMembers(ws.id);
+    setMembers(data);
+    setShowMembers(true);
+  }
+
+  async function sendInvite() {
+    if (!inviteEmail.trim() || !activeWs) return;
+    setInviting(true);
+    try {
+      await api.inviteMember(activeWs.id, inviteEmail.trim());
+      setInviteEmail('');
+      await loadMembers(activeWs);
+    } catch (err) {
+      alert(err.message || 'Invite failed');
+    } finally { setInviting(false); }
+  }
+
+  async function removeMember(userId) {
+    await api.removeMember(activeWs.id, userId);
+    await loadMembers(activeWs);
+  }
 
   async function handleSave(form) {
     if (modal?.id) {
       const updated = await api.updateProject(modal.id, form);
       setProjects(ps => ps.map(p => p.id === updated.id ? updated : p));
     } else {
-      const created = await api.createProject(form);
+      const created = await api.createProject({ ...form, workspace_id: activeWs?.id });
       setProjects(ps => [created, ...ps]);
     }
     setModal(null);
@@ -122,18 +183,42 @@ export default function Dashboard() {
               </button>
             </div>
           </div>
-          {/* View tabs row */}
-          <div className="flex gap-0 border-t border-gray-100">
-            {[['projects', 'Projects'], ['calendar', 'Calendar']].map(([v, label]) => (
-              <button key={v} onClick={() => setView(v)}
-                className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-all ${
-                  view === v
-                    ? 'border-gray-900 text-gray-900'
-                    : 'border-transparent text-gray-400 hover:text-gray-600'
-                }`}>
-                {label}
-              </button>
-            ))}
+          {/* Workspace + view tabs row */}
+          <div className="flex items-center justify-between border-t border-gray-100">
+            {/* Workspace tabs */}
+            <div className="flex items-center gap-1 overflow-x-auto">
+              {workspaces.map(ws => (
+                <button key={ws.id} onClick={() => switchWorkspace(ws)}
+                  className={`flex items-center gap-1.5 px-3 py-2.5 text-sm font-medium border-b-2 transition-all whitespace-nowrap ${
+                    activeWs?.id === ws.id ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-600'
+                  }`}>
+                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: ws.color }} />
+                  {ws.name}
+                  {ws.member_count > 1 && (
+                    <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full">{ws.member_count}</span>
+                  )}
+                </button>
+              ))}
+              <button onClick={() => setShowWsModal(true)}
+                className="px-3 py-2.5 text-sm text-gray-300 hover:text-gray-500 border-b-2 border-transparent transition-colors">+ Workspace</button>
+            </div>
+            {/* View tabs */}
+            <div className="flex gap-0 flex-shrink-0">
+              {[['projects', 'Projects'], ['calendar', 'Calendar']].map(([v, label]) => (
+                <button key={v} onClick={() => setView(v)}
+                  className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-all ${
+                    view === v ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-600'
+                  }`}>
+                  {label}
+                </button>
+              ))}
+              {activeWs?.role === 'owner' && (
+                <button onClick={() => loadMembers(activeWs)}
+                  className="px-3 py-2.5 text-sm text-gray-400 hover:text-gray-600 border-b-2 border-transparent transition-colors" title="Manage members">
+                  👥
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </header>
@@ -313,13 +398,102 @@ export default function Dashboard() {
               </p>
               <div className="flex gap-3">
                 <button onClick={() => setDeleteTarget(null)}
-                  className="flex-1 border border-gray-200 text-gray-600 rounded-xl py-2 text-sm font-medium hover:bg-gray-50 transition-colors">
-                  Cancel
-                </button>
+                  className="flex-1 border border-gray-200 text-gray-600 rounded-xl py-2 text-sm font-medium hover:bg-gray-50 transition-colors">Cancel</button>
                 <button onClick={confirmDelete}
-                  className="flex-1 bg-rose-500 text-white rounded-xl py-2 text-sm font-medium hover:bg-rose-600 transition-colors">
-                  Delete
-                </button>
+                  className="flex-1 bg-rose-500 text-white rounded-xl py-2 text-sm font-medium hover:bg-rose-600 transition-colors">Delete</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* New Workspace modal */}
+        {showWsModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+              className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full space-y-4">
+              <h3 className="text-base font-semibold text-gray-900">New Workspace</h3>
+              <input type="text" value={wsForm.name} onChange={e => setWsForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="Workspace name" autoFocus
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+              <div className="flex items-center gap-3">
+                <label className="text-sm text-gray-500">Colour</label>
+                <input type="color" value={wsForm.color} onChange={e => setWsForm(f => ({ ...f, color: e.target.value }))}
+                  className="w-8 h-8 rounded-lg border border-gray-200 cursor-pointer" />
+              </div>
+              <div className="flex gap-3">
+                <button onClick={() => setShowWsModal(false)}
+                  className="flex-1 border border-gray-200 text-gray-600 rounded-xl py-2 text-sm font-medium hover:bg-gray-50">Cancel</button>
+                <button onClick={createWorkspace} disabled={!wsForm.name.trim()}
+                  className="flex-1 bg-gray-900 text-white rounded-xl py-2 text-sm font-medium hover:bg-gray-700 disabled:opacity-50">Create</button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Members panel */}
+        {showMembers && activeWs && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[80vh] overflow-y-auto">
+              <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-gray-100">
+                <div>
+                  <h3 className="text-base font-semibold text-gray-900">{activeWs.name}</h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Members &amp; Invitations</p>
+                </div>
+                <button onClick={() => { setShowMembers(false); setInviteEmail(''); }}
+                  className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+              </div>
+              <div className="px-6 py-5 space-y-5">
+                {/* Invite */}
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Invite by email</p>
+                  <div className="flex gap-2">
+                    <input type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && sendInvite()}
+                      placeholder="colleague@example.com"
+                      className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+                    <button onClick={sendInvite} disabled={inviting || !inviteEmail.trim()}
+                      className="bg-indigo-600 text-white text-sm px-4 py-2 rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+                      {inviting ? '…' : 'Invite'}
+                    </button>
+                  </div>
+                </div>
+                {/* Current members */}
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Members</p>
+                  <div className="space-y-2">
+                    {members.members.map(m => (
+                      <div key={m.id} className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-xs font-semibold text-indigo-600 flex-shrink-0">
+                          {(m.name || m.email)[0].toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-800 truncate">{m.name || m.email}</p>
+                          <p className="text-xs text-gray-400 truncate">{m.email}</p>
+                        </div>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${m.role === 'owner' ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-500'}`}>{m.role}</span>
+                        {m.role !== 'owner' && m.id !== user?.id && (
+                          <button onClick={() => removeMember(m.id)} className="text-xs text-gray-300 hover:text-rose-400 transition-colors">✕</button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {/* Pending invites */}
+                {members.invites?.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Pending invites</p>
+                    <div className="space-y-1.5">
+                      {members.invites.map(inv => (
+                        <div key={inv.id} className="flex items-center gap-2 text-sm text-gray-500">
+                          <span className="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" />
+                          <span className="flex-1 truncate">{inv.email}</span>
+                          <span className="text-xs text-gray-300">awaiting</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </motion.div>
           </div>

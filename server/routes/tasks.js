@@ -54,10 +54,14 @@ function attachChecklist(tasks) {
   }
   return tasks.map(t => ({
     ...t,
-    context: JSON.parse(t.context || '[]'),
-    purpose: JSON.parse(t.purpose || '[]'),
-    outcome: JSON.parse(t.outcome || '[]'),
-    approach: JSON.parse(t.approach || '[]'),
+    context:            JSON.parse(t.context            || '[]'),
+    purpose:            JSON.parse(t.purpose            || '[]'),
+    outcome:            JSON.parse(t.outcome            || '[]'),
+    approach:           JSON.parse(t.approach           || '[]'),
+    quadrant_quick_win: JSON.parse(t.quadrant_quick_win || '[]'),
+    quadrant_fill_in:   JSON.parse(t.quadrant_fill_in   || '[]'),
+    quadrant_big_bet:   JSON.parse(t.quadrant_big_bet   || '[]'),
+    quadrant_avoid:     JSON.parse(t.quadrant_avoid     || '[]'),
     checklist: map[t.id] || [],
   }));
 }
@@ -114,14 +118,16 @@ router.get('/projects/:projectId/tasks', (req, res) => {
 // POST /api/projects/:projectId/tasks
 router.post('/projects/:projectId/tasks', (req, res) => {
   if (!ownsProject(req.params.projectId, req.user.id)) return res.status(404).json({ error: 'Not found' });
-  const { title, status, context, purpose, outcome, approach, raw_notes, checklist, start_date, due_date } = req.body;
+  const { title, status, context, purpose, outcome, approach, raw_notes, checklist, start_date, due_date,
+          problem_statement, quadrant_quick_win, quadrant_fill_in, quadrant_big_bet, quadrant_avoid } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Title required' });
 
   const maxPos = db.prepare('SELECT MAX(position) as m FROM tasks WHERE project_id = ?').get(req.params.projectId);
 
   const result = db.prepare(`
-    INSERT INTO tasks (project_id, title, status, position, context, purpose, outcome, approach, raw_notes, start_date, due_date)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (project_id, title, status, position, context, purpose, outcome, approach, raw_notes,
+                       start_date, due_date, problem_statement, quadrant_quick_win, quadrant_fill_in, quadrant_big_bet, quadrant_avoid)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     req.params.projectId,
     title.trim(),
@@ -133,7 +139,12 @@ router.post('/projects/:projectId/tasks', (req, res) => {
     JSON.stringify(approach || []),
     raw_notes || '',
     start_date || null,
-    due_date || null
+    due_date || null,
+    problem_statement || '',
+    JSON.stringify(quadrant_quick_win || []),
+    JSON.stringify(quadrant_fill_in   || []),
+    JSON.stringify(quadrant_big_bet   || []),
+    JSON.stringify(quadrant_avoid     || [])
   );
 
   if (checklist?.length) {
@@ -155,26 +166,37 @@ router.put('/tasks/:id', (req, res) => {
   const task = db.prepare('SELECT t.* FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = ? AND p.user_id = ?').get(req.params.id, req.user.id);
   if (!task) return res.status(404).json({ error: 'Not found' });
 
-  const { title, status, position, context, purpose, outcome, approach, raw_notes, checklist, start_date, due_date } = req.body;
+  const { title, status, position, context, purpose, outcome, approach, raw_notes, checklist, start_date, due_date,
+          problem_statement, quadrant_quick_win, quadrant_fill_in, quadrant_big_bet, quadrant_avoid } = req.body;
 
   db.prepare(`
     UPDATE tasks SET
       title = ?, status = ?, position = ?,
       context = ?, purpose = ?, outcome = ?, approach = ?,
       raw_notes = ?, start_date = ?, due_date = ?,
+      problem_statement  = ?,
+      quadrant_quick_win = ?,
+      quadrant_fill_in   = ?,
+      quadrant_big_bet   = ?,
+      quadrant_avoid     = ?,
       updated_at = datetime('now')
     WHERE id = ?
   `).run(
     title ?? task.title,
     status ?? task.status,
     position ?? task.position,
-    JSON.stringify(context ?? JSON.parse(task.context)),
-    JSON.stringify(purpose ?? JSON.parse(task.purpose)),
-    JSON.stringify(outcome ?? JSON.parse(task.outcome)),
-    JSON.stringify(approach ?? JSON.parse(task.approach)),
+    JSON.stringify(context ?? JSON.parse(task.context || '[]')),
+    JSON.stringify(purpose ?? JSON.parse(task.purpose || '[]')),
+    JSON.stringify(outcome ?? JSON.parse(task.outcome || '[]')),
+    JSON.stringify(approach ?? JSON.parse(task.approach || '[]')),
     raw_notes ?? task.raw_notes,
     start_date !== undefined ? (start_date || null) : task.start_date,
     due_date   !== undefined ? (due_date   || null) : task.due_date,
+    problem_statement  !== undefined ? (problem_statement  || '')   : (task.problem_statement  || ''),
+    JSON.stringify(quadrant_quick_win !== undefined ? (quadrant_quick_win || []) : JSON.parse(task.quadrant_quick_win || '[]')),
+    JSON.stringify(quadrant_fill_in   !== undefined ? (quadrant_fill_in   || []) : JSON.parse(task.quadrant_fill_in   || '[]')),
+    JSON.stringify(quadrant_big_bet   !== undefined ? (quadrant_big_bet   || []) : JSON.parse(task.quadrant_big_bet   || '[]')),
+    JSON.stringify(quadrant_avoid     !== undefined ? (quadrant_avoid     || []) : JSON.parse(task.quadrant_avoid     || '[]')),
     req.params.id
   );
 

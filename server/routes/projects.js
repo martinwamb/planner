@@ -28,31 +28,51 @@ function syncTags(projectId, tagIds) {
   for (const tid of tagIds) insert.run(projectId, tid);
 }
 
-// GET /api/projects
+// GET /api/projects — own + workspace-shared; filter by ?workspace_id=N
 router.get('/', (req, res) => {
-  let projects = db.prepare(
-    'SELECT * FROM projects WHERE user_id = ? ORDER BY created_at DESC'
-  ).all(req.user.id);
+  const { workspace_id } = req.query;
+  let projects;
+  if (workspace_id) {
+    const isMember = db.prepare('SELECT 1 FROM workspace_members WHERE workspace_id = ? AND user_id = ?').get(workspace_id, req.user.id);
+    if (!isMember) return res.json([]);
+    projects = db.prepare('SELECT * FROM projects WHERE workspace_id = ? ORDER BY created_at DESC').all(workspace_id);
+  } else {
+    projects = db.prepare(`
+      SELECT DISTINCT p.* FROM projects p
+      WHERE p.user_id = ?
+         OR p.workspace_id IN (SELECT workspace_id FROM workspace_members WHERE user_id = ?)
+      ORDER BY p.created_at DESC
+    `).all(req.user.id, req.user.id);
+  }
   res.json(attachTags(projects));
 });
 
 // GET /api/projects/:id
 router.get('/:id', (req, res) => {
-  const project = db.prepare(
-    'SELECT * FROM projects WHERE id = ? AND user_id = ?'
-  ).get(req.params.id, req.user.id);
+  const project = db.prepare(`
+    SELECT DISTINCT p.* FROM projects p
+    WHERE p.id = ? AND (
+      p.user_id = ?
+      OR p.workspace_id IN (SELECT workspace_id FROM workspace_members WHERE user_id = ?)
+    )
+  `).get(req.params.id, req.user.id, req.user.id);
   if (!project) return res.status(404).json({ error: 'Not found' });
   res.json(attachTags([project])[0]);
 });
 
 // POST /api/projects
 router.post('/', (req, res) => {
-  const { name, description, color, priority, status, deadline, progress, notes, tag_ids } = req.body;
+  const { name, description, color, priority, status, deadline, progress, notes, tag_ids, workspace_id } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Name is required' });
 
+  // Default to the user's Personal workspace if none specified
+  const wsId = workspace_id || db.prepare(
+    "SELECT w.id FROM workspaces w JOIN workspace_members wm ON wm.workspace_id = w.id WHERE wm.user_id = ? AND w.name = 'Personal' LIMIT 1"
+  ).get(req.user.id)?.id || null;
+
   const result = db.prepare(`
-    INSERT INTO projects (user_id, name, description, color, priority, status, deadline, progress, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO projects (user_id, name, description, color, priority, status, deadline, progress, notes, workspace_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     req.user.id,
     name.trim(),
@@ -62,7 +82,8 @@ router.post('/', (req, res) => {
     status || 'planning',
     deadline || null,
     progress ?? 0,
-    notes || ''
+    notes || '',
+    wsId
   );
 
   syncTags(result.lastInsertRowid, tag_ids);

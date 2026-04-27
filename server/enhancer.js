@@ -12,12 +12,13 @@ function getProjectContext(taskId) {
 }
 
 function getProjectContextByProjectId(projectId, excludeTaskId) {
-  const project  = db.prepare('SELECT deadline FROM projects WHERE id = ?').get(projectId);
+  const project  = db.prepare('SELECT name, deadline FROM projects WHERE id = ?').get(projectId);
   const siblings = db.prepare(
     'SELECT title, due_date FROM tasks WHERE project_id = ? AND id != ? AND due_date IS NOT NULL ORDER BY due_date ASC LIMIT 5'
   ).all(projectId, excludeTaskId ?? 0);
   return {
     today:           new Date().toISOString().split('T')[0],
+    projectName:     project?.name || '',
     projectDeadline: project?.deadline || null,
     siblings,
   };
@@ -29,33 +30,37 @@ function buildPrompt(title, notes, ctx = {}) {
   const siblings = ctx.siblings?.length
     ? `other tasks already scheduled: ${ctx.siblings.map(t => `"${t.title}" due ${t.due_date}`).join('; ')}`
     : '';
+  const project  = ctx.projectName ? `Project: "${ctx.projectName}"` : '';
 
-  return `You are a project management assistant. Structure these task notes and suggest a realistic timeline.
+  return `You are a project management assistant. Analyse this task and produce a structured summary.
 
 Today: ${today}
+${project}
 Task title: ${title}
-Rough notes: ${notes || title}
+Notes: ${notes || title}
 ${deadline}
 ${siblings}
 
-Respond with ONLY a valid JSON object, no explanation, no markdown:
+Respond with ONLY a valid JSON object — no explanation, no markdown:
 {
-  "context":    ["bullet 1 of 8-10 words", "bullet 2", "bullet 3"],
-  "purpose":    ["bullet 1 of 8-10 words", "bullet 2", "bullet 3"],
-  "outcome":    ["bullet 1 of 8-10 words", "bullet 2", "bullet 3"],
-  "approach":   ["bullet 1 of 8-10 words", "bullet 2", "bullet 3"],
-  "checklist":  ["action item 1", "action item 2", "action item 3", "action item 4", "action item 5"],
+  "problem_statement": "One SMART sentence: How do we [specific goal] by [measurable output] within [time frame]?",
+  "quadrant_quick_win": ["easy, high-value action 1", "easy, high-value action 2"],
+  "quadrant_fill_in":   ["easy, lower-value action 1"],
+  "quadrant_big_bet":   ["complex, high-value action 1", "complex, high-value action 2"],
+  "quadrant_avoid":     ["complex, low-value action to deprioritise"],
+  "checklist":          ["concrete to-do item from quick wins 1", "item 2", "item 3", "item 4", "item 5"],
   "start_date": "YYYY-MM-DD",
   "due_date":   "YYYY-MM-DD"
 }
 
-context    = background/situation (why this task exists)
-purpose    = why this task matters to the project
-outcome    = what success looks like when done
-approach   = how to execute, step by step thinking
-checklist  = specific, simple, non-technical to-do items
-start_date = when to start (today or later)
-due_date   = realistic completion date, after start_date${ctx.projectDeadline ? ', on or before project deadline' : ''}`;
+problem_statement = one SMART sentence defining the task goal (Specific, Measurable, Attainable, Time-bound)
+quadrant_quick_win = easy to execute AND high value — DO THESE FIRST
+quadrant_fill_in   = easy to execute but lower value — batch or delegate
+quadrant_big_bet   = complex but high value — plan and resource carefully
+quadrant_avoid     = complex AND low value — question whether needed at all
+checklist          = concrete actionable to-do items, derived from quadrant_quick_win
+start_date = when to start this task (today or later)
+due_date   = realistic completion date (after start_date${ctx.projectDeadline ? ', on or before project deadline' : ''})`;
 }
 
 function validateDates(parsed, today) {
@@ -64,8 +69,13 @@ function validateDates(parsed, today) {
   return { start, due };
 }
 
+function parseQuadrant(val) {
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'string') { try { return JSON.parse(val); } catch { return []; } }
+  return [];
+}
+
 // Enhance a single task: structure it AND set dates if not already set.
-// Safe to call without await — errors are logged, never thrown.
 async function enhanceTask(taskId) {
   try {
     const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
@@ -86,9 +96,13 @@ async function enhanceTask(taskId) {
 
     const { start, due } = validateDates(parsed, ctx.today);
 
-    // Update structure; only write dates if the task doesn't have them yet
     db.prepare(`
       UPDATE tasks SET
+        problem_statement  = ?,
+        quadrant_quick_win = ?,
+        quadrant_fill_in   = ?,
+        quadrant_big_bet   = ?,
+        quadrant_avoid     = ?,
         context    = ?,
         purpose    = ?,
         outcome    = ?,
@@ -98,10 +112,16 @@ async function enhanceTask(taskId) {
         updated_at = datetime('now')
       WHERE id = ?
     `).run(
-      JSON.stringify(parsed.context  || []),
-      JSON.stringify(parsed.purpose  || []),
-      JSON.stringify(parsed.outcome  || []),
-      JSON.stringify(parsed.approach || []),
+      parsed.problem_statement || '',
+      JSON.stringify(parseQuadrant(parsed.quadrant_quick_win)),
+      JSON.stringify(parseQuadrant(parsed.quadrant_fill_in)),
+      JSON.stringify(parseQuadrant(parsed.quadrant_big_bet)),
+      JSON.stringify(parseQuadrant(parsed.quadrant_avoid)),
+      // keep old fields populated so old UI still works during transition
+      JSON.stringify(parseQuadrant(parsed.quadrant_quick_win)),
+      JSON.stringify([parsed.problem_statement || '']),
+      JSON.stringify(parseQuadrant(parsed.quadrant_big_bet)),
+      JSON.stringify(parseQuadrant(parsed.quadrant_quick_win)),
       start, due,
       taskId
     );
@@ -123,7 +143,6 @@ async function enhanceTask(taskId) {
   }
 }
 
-// Batch-enhance all tasks that have no structured content yet.
 async function enhanceAllUnenhanced() {
   const tasks = db.prepare(`
     SELECT id FROM tasks WHERE (context IS NULL OR context = '[]') ORDER BY id ASC
@@ -133,13 +152,10 @@ async function enhanceAllUnenhanced() {
   console.log('[enhancer] Structuring complete');
 }
 
-// Backfill dates for all non-done tasks that still have no due_date.
 async function enhanceAllDates() {
   const tasks = db.prepare(`
     SELECT t.id, t.title, t.raw_notes, t.project_id
-    FROM tasks t
-    WHERE t.due_date IS NULL AND t.status != 'done'
-    ORDER BY t.id ASC
+    FROM tasks t WHERE t.due_date IS NULL AND t.status != 'done' ORDER BY t.id ASC
   `).all();
   if (!tasks.length) { console.log('[enhancer] All tasks already have dates'); return; }
   console.log(`[enhancer] ${tasks.length} task(s) need date suggestion`);
@@ -154,19 +170,13 @@ Project deadline: ${ctx.projectDeadline || 'none'}
 ${ctx.siblings?.length ? `Other scheduled tasks: ${ctx.siblings.map(s => `"${s.title}" due ${s.due_date}`).join('; ')}` : ''}
 ${t.raw_notes ? `Notes: ${t.raw_notes}` : ''}
 
-Respond ONLY with valid JSON — no other text:
-{"start_date": "YYYY-MM-DD", "due_date": "YYYY-MM-DD"}
-
+Respond ONLY with valid JSON: {"start_date": "YYYY-MM-DD", "due_date": "YYYY-MM-DD"}
 Rules: start_date >= today, due_date > start_date${ctx.projectDeadline ? `, both on or before ${ctx.projectDeadline}` : ''}.`;
 
       const raw = await chat(prompt, { json: true });
       let parsed;
       try { parsed = JSON.parse(raw); }
-      catch {
-        const m = raw.match(/\{[\s\S]*\}/);
-        if (!m) continue;
-        parsed = JSON.parse(m[0]);
-      }
+      catch { const m = raw.match(/\{[\s\S]*\}/); if (!m) continue; parsed = JSON.parse(m[0]); }
 
       const { start, due } = validateDates(parsed, ctx.today);
       if (due) {

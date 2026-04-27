@@ -4,6 +4,7 @@ import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import ProjectDetail from './pages/ProjectDetail';
+import InvitePage from './pages/InvitePage';
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -24,10 +25,11 @@ function AppRoutes() {
   );
   return (
     <Routes>
-      <Route path="/"          element={user ? <Navigate to="/dashboard" replace /> : <Landing />} />
-      <Route path="/login"     element={user ? <Navigate to="/dashboard" replace /> : <Login />} />
-      <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-      <Route path="/projects/:id" element={<ProtectedRoute><ProjectDetail /></ProtectedRoute>} />
+      <Route path="/"               element={user ? <Navigate to="/dashboard" replace /> : <Landing />} />
+      <Route path="/login"          element={user ? <Navigate to="/dashboard" replace /> : <Login />} />
+      <Route path="/dashboard"      element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+      <Route path="/projects/:id"   element={<ProtectedRoute><ProjectDetail /></ProtectedRoute>} />
+      <Route path="/invite/:token"  element={<InvitePage />} />
     </Routes>
   );
 }
