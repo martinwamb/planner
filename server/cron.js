@@ -62,7 +62,7 @@ Return only the HTML body content.`;
 // Runs every day at 09:00. Enhances any tasks that still lack structure,
 // then tops up checklist items on tasks with fewer than 3 unchecked items.
 function scheduleDailyEnhancement() {
-  cron.schedule('0 9 * * *', async () => {
+  cron.schedule('0 9 * * *', async () => {  // 09:00 EAT
     console.log('[cron] Running daily enhancement...');
     try {
       // 1. Enhance any tasks that were never structured
@@ -137,18 +137,19 @@ Respond ONLY with valid JSON: {"items": ["action one", "action two", "action thr
     } catch (err) {
       console.error('[cron] Daily enhancement failed:', err);
     }
-  });
-  console.log('[cron] Daily enhancement scheduled for 09:00');
+  }, { timezone: 'Africa/Nairobi' });
+  console.log('[cron] Daily enhancement scheduled for 09:00 EAT');
 }
 
 // ─── Daily plan email ─────────────────────────────────────────────────────────
 // Runs every weekday at 07:30. Uses the same cached plan as the calendar view
 // so the email always matches what the user sees in the app.
 function scheduleDailyPlanEmail() {
+  // 07:30 Africa/Nairobi (EAT = UTC+3) — node-cron resolves the timezone
   cron.schedule('30 7 * * 1-5', async () => {
     console.log('[cron] Sending daily plan emails...');
     const users = db.prepare('SELECT * FROM users').all();
-    const today = new Date().toISOString().split('T')[0];
+    const today = new Date().toLocaleString('en-CA', { timeZone: 'Africa/Nairobi' }).split(',')[0];
     const dayLabel = new Date(today + 'T12:00:00').toLocaleDateString('en-GB', {
       weekday: 'long', day: 'numeric', month: 'long',
     });
@@ -163,8 +164,8 @@ function scheduleDailyPlanEmail() {
         console.error(`[cron] Daily plan email failed for ${user.email}:`, err.message);
       }
     }
-  });
-  console.log('[cron] Daily plan email scheduled for weekdays at 07:30');
+  }, { timezone: 'Africa/Nairobi' });
+  console.log('[cron] Daily plan email scheduled for weekdays at 07:30 EAT');
 }
 
 module.exports = { scheduleWeeklyDigest, scheduleDailyEnhancement, scheduleDailyPlanEmail };

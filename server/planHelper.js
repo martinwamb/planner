@@ -91,56 +91,88 @@ async function generateAndCacheDailyPlan(userId, date) {
 
   if (!projects.length) return { summary: 'No active projects.', blocks: [] };
 
+  // Read last 3 days of plans to know which tasks were recently recommended
+  const recentPlans = db.prepare(
+    'SELECT plan_json FROM daily_plans WHERE user_id = ? AND date < ? ORDER BY date DESC LIMIT 3'
+  ).all(userId, date);
+  const recentlyFeatured = new Set();
+  for (const rp of recentPlans) {
+    try {
+      for (const block of (JSON.parse(rp.plan_json).blocks || []))
+        if (block.task) recentlyFeatured.add(block.task.toLowerCase().trim());
+    } catch {}
+  }
+
   const projectsWithTasks = projects.map(p => {
+    // Include all non-done tasks ordered by due date so AI has full variety
     const tasks = db.prepare(`
-      SELECT t.id, t.title, t.status, t.context, t.purpose, t.approach
+      SELECT t.id, t.title, t.status, t.due_date
       FROM tasks t WHERE t.project_id = ? AND t.status != 'done'
+      ORDER BY t.due_date ASC NULLS LAST, t.id ASC
+      LIMIT 8
     `).all(p.id);
-    const tasksWithItems = tasks.map(t => {
-      const items = db.prepare(
-        'SELECT text FROM checklist_items WHERE task_id = ? AND checked = 0 ORDER BY position ASC LIMIT 6'
+
+    const enriched = tasks.map(t => {
+      const pending = db.prepare(
+        'SELECT text FROM checklist_items WHERE task_id = ? AND checked = 0 ORDER BY position ASC LIMIT 4'
       ).all(t.id).map(i => i.text);
-      return { ...t, pending_items: items };
-    }).filter(t => t.pending_items.length > 0 || t.status === 'in-progress');
-    return { ...p, tasks: tasksWithItems };
+      const doneCount = db.prepare(
+        'SELECT COUNT(*) as c FROM checklist_items WHERE task_id = ? AND checked = 1'
+      ).get(t.id)?.c || 0;
+      return { ...t, pending, doneCount };
+    });
+
+    return { ...p, tasks: enriched };
   }).filter(p => p.tasks.length > 0);
 
   if (!projectsWithTasks.length) {
-    return { summary: 'All checklist items are complete. Great work!', blocks: [] };
+    return { summary: 'All tasks are done. Great work!', blocks: [] };
   }
+
+  const recentNote = recentlyFeatured.size > 0
+    ? `\nTasks featured in the LAST 3 DAYS — skip these today unless overdue or due today:\n${[...recentlyFeatured].map(t => `  - "${t}"`).join('\n')}\n`
+    : '';
 
   const projectList = projectsWithTasks.map(p =>
     `Project: "${p.name}" (priority: ${p.priority}, deadline: ${p.deadline || 'none'}, color: ${p.color})\n` +
-    p.tasks.map(t =>
-      `  Task: "${t.title}" [${t.status}]\n` +
-      (t.pending_items.length ? `    Pending items: ${t.pending_items.slice(0, 4).join(' | ')}` : '')
-    ).join('\n')
+    p.tasks.map(t => {
+      const due      = t.due_date ? ` | due: ${t.due_date}` : '';
+      const progress = t.doneCount > 0 ? ` | ${t.doneCount} items already done` : '';
+      const recent   = recentlyFeatured.has(t.title.toLowerCase().trim()) ? ' [FEATURED RECENTLY]' : '';
+      const items    = t.pending.length ? `\n    Next items: ${t.pending.slice(0, 3).join(' | ')}` : '';
+      return `  Task: "${t.title}" [${t.status}${due}${progress}${recent}]${items}`;
+    }).join('\n')
   ).join('\n\n');
 
-  const prompt = `Today is ${date}. You are a productivity coach planning someone's workday.
+  const prompt = `Today is ${date}. You are a productivity coach building a daily work plan.
 
-Active projects and their pending work:
+Projects and tasks:
 ${projectList}
-
-Create a focused daily plan. Prioritise by: deadline urgency, task already in-progress, project priority.
-Spread work across at most 3 projects. Keep it realistic for one day.
+${recentNote}
+RULES — follow these strictly:
+1. ROTATE: Never pick a task marked [FEATURED RECENTLY] unless its due date is today or it is overdue.
+2. PROGRESS: A task with "items already done" has had attention — move to a DIFFERENT task today.
+3. VARIETY: Pick tasks from at least 2 different projects when possible.
+4. DEADLINES: Tasks with due_date = today or earlier are urgent — always include them.
+5. ONE TASK PER PROJECT per day maximum (unless a project has an urgent + a normal task).
+6. Suggest only 1-2 checklist items per task — not the whole list.
 
 Respond ONLY with valid JSON, no markdown:
 {
-  "summary": "one encouraging sentence about what to focus on today",
+  "summary": "one encouraging sentence about today's focus",
   "blocks": [
     {
       "label": "Top Priority",
       "project": "exact project name",
       "color": "exact hex color from above",
       "task": "exact task title",
-      "items": ["specific checklist item to do today", "another item"],
-      "reason": "one short sentence why this is important today"
+      "items": ["one specific checklist item to do today"],
+      "reason": "one sentence: why this task today"
     }
   ]
 }
 
-Include 3-5 blocks maximum. Use labels: "Top Priority", "Important", "If time allows".`;
+Use labels: "Top Priority", "Important", "If time allows". Max 4 blocks.`;
 
   const raw = await chat(prompt, { json: true });
   let parsed;
