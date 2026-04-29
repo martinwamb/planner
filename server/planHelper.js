@@ -193,43 +193,62 @@ Use exactly one "Top Priority", one or two "Important", and optionally one "If t
     parsed = JSON.parse(match[0]);
   }
 
-  // Enrich blocks with project_id and task_id for clickable navigation
+  // Enrich blocks with project_id and task_id for clickable navigation.
+  // The AI frequently misreads the prompt hierarchy — common failure modes:
+  //   (a) puts the task title in 'project' and checklist item in 'task'
+  //   (b) changes capitalisation
+  //   (c) truncates the title
+  // We try multiple resolution strategies and correct the block fields in-place.
   if (parsed.blocks) {
     for (const block of parsed.blocks) {
-      // Match project — try exact then case-insensitive
-      const proj = projects.find(p => p.name === block.project)
-                || projects.find(p => p.name.toLowerCase() === block.project?.toLowerCase());
-      if (!proj) continue;
-      block.project_id = proj.id;
+      // ── Strategy A: AI put task title in 'project' field ──────────────────
+      // e.g. project:"Mobile App creation", task:"Register App Store account"
+      // Detect: block.project matches no project name but does match a task title
+      const projByName = projects.find(p => p.name === block.project)
+                      || projects.find(p => p.name.toLowerCase() === block.project?.toLowerCase());
 
-      // 1. Try exact task title match
+      if (!projByName) {
+        const taskRow = db.prepare(`
+          SELECT t.id, t.project_id, t.title FROM tasks t
+          WHERE LOWER(t.title) = LOWER(?) LIMIT 1
+        `).get(block.project || '');
+
+        if (taskRow) {
+          const ownerProj = projects.find(p => p.id === taskRow.project_id);
+          if (ownerProj) {
+            // Fix the block: the task is what was in 'project', items stay
+            block.project    = ownerProj.name;
+            block.color      = ownerProj.color;
+            block.project_id = ownerProj.id;
+            block.task       = taskRow.title;
+            block.task_id    = taskRow.id;
+            continue;
+          }
+        }
+        // Could not resolve — skip
+        continue;
+      }
+
+      // ── Strategy B: normal project match, look up task ────────────────────
+      block.project_id = projByName.id;
+
+      // B1. Exact title
       let task = db.prepare('SELECT id, title FROM tasks WHERE project_id = ? AND title = ? LIMIT 1')
-        .get(proj.id, block.task);
-
-      // 2. Case-insensitive match (AI sometimes changes capitalisation)
-      if (!task) {
-        task = db.prepare('SELECT id, title FROM tasks WHERE project_id = ? AND LOWER(title) = LOWER(?) LIMIT 1')
-          .get(proj.id, block.task);
-      }
-
-      // 3. Partial match — block.task is a substring of a real task title
-      if (!task) {
-        task = db.prepare("SELECT id, title FROM tasks WHERE project_id = ? AND LOWER(title) LIKE '%' || LOWER(?) || '%' LIMIT 1")
-          .get(proj.id, block.task);
-      }
-
-      // 4. The AI used a checklist item text instead of the task title — find the parent task
+        .get(projByName.id, block.task);
+      // B2. Case-insensitive
+      if (!task) task = db.prepare('SELECT id, title FROM tasks WHERE project_id = ? AND LOWER(title) = LOWER(?) LIMIT 1')
+        .get(projByName.id, block.task);
+      // B3. Substring (AI truncated)
+      if (!task) task = db.prepare("SELECT id, title FROM tasks WHERE project_id = ? AND LOWER(title) LIKE '%' || LOWER(?) || '%' LIMIT 1")
+        .get(projByName.id, block.task);
+      // B4. AI used a checklist item — reverse-lookup parent task
       if (!task) {
         const row = db.prepare(`
           SELECT t.id, t.title FROM tasks t
           JOIN checklist_items ci ON ci.task_id = t.id
-          WHERE t.project_id = ? AND LOWER(ci.text) = LOWER(?)
-          LIMIT 1
-        `).get(proj.id, block.task);
-        if (row) {
-          task = row;
-          block.task = row.title; // Correct the displayed title to the real task name
-        }
+          WHERE t.project_id = ? AND LOWER(ci.text) = LOWER(?) LIMIT 1
+        `).get(projByName.id, block.task);
+        if (row) { task = row; block.task = row.title; }
       }
 
       if (task) block.task_id = task.id;
