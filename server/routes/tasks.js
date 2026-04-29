@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../auth');
 const { enhanceTask } = require('../enhancer');
+const rewards = require('../rewards');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -221,14 +222,17 @@ router.patch('/tasks/:id/status', (req, res) => {
   const task = db.prepare('SELECT t.* FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = ? AND p.user_id = ?').get(req.params.id, req.user.id);
   if (!task) return res.status(404).json({ error: 'Not found' });
   const { status } = req.body;
+  const wasNotDone = task.status !== 'done';
   db.prepare("UPDATE tasks SET status = ?, updated_at = datetime('now') WHERE id = ?").run(status, req.params.id);
+  // Award points when a task is moved to done for the first time
+  if (status === 'done' && wasNotDone) rewards.onTaskDone(req.user.id, task.id);
   res.json({ ok: true });
 });
 
 // PATCH /api/checklist/:id — toggle checklist item, auto-update task status + project progress
 router.patch('/checklist/:id', (req, res) => {
   const item = db.prepare(`
-    SELECT ci.*, t.project_id FROM checklist_items ci
+    SELECT ci.*, t.project_id, t.id as task_id_col FROM checklist_items ci
     JOIN tasks t ON t.id = ci.task_id
     JOIN projects p ON p.id = t.project_id
     WHERE ci.id = ? AND p.user_id = ?
@@ -236,8 +240,12 @@ router.patch('/checklist/:id', (req, res) => {
   if (!item) return res.status(404).json({ error: 'Not found' });
   const { checked } = req.body;
   db.prepare('UPDATE checklist_items SET checked = ? WHERE id = ?').run(checked ? 1 : 0, req.params.id);
-  const task_status    = recalcTaskStatus(item.task_id);
+  // Award points when an item is checked (not on uncheck)
+  if (checked) rewards.onChecklistDone(req.user.id, Number(req.params.id));
+  const task_status      = recalcTaskStatus(item.task_id);
   const project_progress = recalcProjectProgress(item.project_id);
+  // Award task-done bonus if task just became done via checklist
+  if (task_status === 'done') rewards.onTaskDone(req.user.id, item.task_id);
   res.json({ ok: true, task_status, project_progress });
 });
 

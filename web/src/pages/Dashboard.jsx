@@ -32,8 +32,11 @@ export default function Dashboard() {
   const [members, setMembers]           = useState({ members: [], invites: [] });
   const [inviteEmail, setInviteEmail]   = useState('');
   const [inviting, setInviting]         = useState(false);
+  const [rewards, setRewards]           = useState(null);
+  const [showRewards, setShowRewards]   = useState(false);
 
   useEffect(() => {
+    api.getRewards().then(setRewards).catch(() => {});
     Promise.all([api.getWorkspaces(), api.getTags(), api.getTaskStats()])
       .then(([ws, t, ts]) => {
         setWorkspaces(ws);
@@ -161,6 +164,17 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {/* Points + streak pill */}
+              {rewards && (
+                <button onClick={() => setShowRewards(true)}
+                  className="hidden sm:flex items-center gap-1.5 bg-amber-50 border border-amber-100 text-amber-700 text-xs font-semibold px-2.5 py-1.5 rounded-xl hover:bg-amber-100 transition-colors">
+                  <span>⭐</span>
+                  <span>{rewards.total_points?.toLocaleString() || 0} pts</span>
+                  {rewards.current_streak > 0 && (
+                    <span className="ml-1 text-orange-500">🔥 {rewards.current_streak}</span>
+                  )}
+                </button>
+              )}
               <button onClick={handleAIPriorities} disabled={aiLoading}
                 className="text-sm text-indigo-600 hover:text-indigo-800 px-3 py-2 rounded-lg hover:bg-indigo-50 transition-colors font-medium disabled:opacity-50">
                 {aiLoading ? '…' : '✦ AI Insights'}
@@ -494,6 +508,70 @@ export default function Dashboard() {
                     </div>
                   </div>
                 )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+        {/* Rewards / Badges panel */}
+        {showRewards && rewards && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto">
+              <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-gray-100">
+                <h3 className="text-base font-semibold text-gray-900">Your Progress</h3>
+                <button onClick={() => setShowRewards(false)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+              </div>
+
+              {/* Stats row */}
+              <div className="grid grid-cols-3 gap-3 px-6 py-4 border-b border-gray-100">
+                {[
+                  { icon: '⭐', label: 'Points',         value: (rewards.total_points || 0).toLocaleString() },
+                  { icon: '✅', label: 'Tasks done',     value: rewards.tasks_completed || 0 },
+                  { icon: '🔥', label: 'Day streak',     value: rewards.current_streak  || 0 },
+                ].map(s => (
+                  <div key={s.label} className="text-center bg-gray-50 rounded-xl py-3">
+                    <p className="text-xl mb-0.5">{s.icon}</p>
+                    <p className="text-lg font-bold text-gray-900">{s.value}</p>
+                    <p className="text-xs text-gray-400">{s.label}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* Checklist + project stats */}
+              <div className="flex gap-6 px-6 py-3 border-b border-gray-100 text-sm text-gray-500">
+                <span>☑ <strong className="text-gray-700">{rewards.checklist_done || 0}</strong> checklist items</span>
+                <span>🏆 <strong className="text-gray-700">{rewards.projects_completed || 0}</strong> projects completed</span>
+                {(rewards.longest_streak || 0) > (rewards.current_streak || 0) && (
+                  <span>📈 Best streak: <strong className="text-gray-700">{rewards.longest_streak}</strong> days</span>
+                )}
+              </div>
+
+              {/* Badges grid */}
+              <div className="px-6 py-4">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Badges</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {(rewards.badges || []).map(badge => (
+                    <div key={badge.id}
+                      className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${
+                        badge.earned
+                          ? 'border-amber-200 bg-amber-50'
+                          : 'border-gray-100 bg-gray-50 opacity-50'
+                      }`}>
+                      <span className="text-2xl flex-shrink-0">{badge.emoji}</span>
+                      <div className="min-w-0">
+                        <p className={`text-sm font-semibold truncate ${badge.earned ? 'text-gray-900' : 'text-gray-400'}`}>
+                          {badge.name}
+                        </p>
+                        <p className="text-xs text-gray-400 leading-tight">{badge.desc}</p>
+                        {badge.earned && badge.earned_at && (
+                          <p className="text-xs text-amber-500 mt-0.5">
+                            {new Date(badge.earned_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </motion.div>
           </div>

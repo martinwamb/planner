@@ -68,6 +68,10 @@ export const api = {
   register:     (body)  => request('/auth/register', { method: 'POST', body: JSON.stringify(body) }),
   logout:       ()      => request('/auth/logout',   { method: 'POST' }),
 
+  // Rewards
+  getRewards:        ()     => request('/rewards'),
+  backfillRewards:   ()     => request('/rewards/backfill', { method: 'POST' }),
+
   // Workspaces
   getWorkspaces:      ()         => request('/workspaces'),
   createWorkspace:    (body)     => request('/workspaces',       { method: 'POST',   body: JSON.stringify(body) }),

@@ -3,6 +3,7 @@ const crypto   = require('crypto');
 const db       = require('../db');
 const { requireAuth } = require('../auth');
 const { sendMail }    = require('../email');
+const rewards         = require('../rewards');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -191,6 +192,7 @@ router.post('/invite/:token/accept', (req, res) => {
   db.prepare(`INSERT OR IGNORE INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, 'member')`)
     .run(inv.workspace_id, req.user.id);
   db.prepare(`UPDATE workspace_invites SET accepted_at = datetime('now') WHERE id = ?`).run(inv.id);
+  rewards.onWorkspaceJoined(req.user.id);
 
   const ws = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(inv.workspace_id);
   res.json({ ok: true, workspace: ws });

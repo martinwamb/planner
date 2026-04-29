@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../auth');
+const rewards = require('../rewards');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -120,6 +121,10 @@ router.put('/:id', (req, res) => {
   if (tag_ids !== undefined) syncTags(req.params.id, tag_ids);
 
   const updated = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
+  // Award points if this update just completed the project
+  if (updated.status === 'complete' && existing.status !== 'complete') {
+    rewards.onProjectDone(req.user.id, updated.id);
+  }
   res.json(attachTags([updated])[0]);
 });
 

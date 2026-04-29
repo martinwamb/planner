@@ -125,6 +125,36 @@ db.exec(`
 `);
 try { db.exec(`ALTER TABLE projects ADD COLUMN workspace_id INTEGER REFERENCES workspaces(id) ON DELETE SET NULL`); } catch (_) {}
 
+// Rewards tables
+db.exec(`
+  CREATE TABLE IF NOT EXISTS user_stats (
+    user_id            INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    total_points       INTEGER DEFAULT 0,
+    current_streak     INTEGER DEFAULT 0,
+    longest_streak     INTEGER DEFAULT 0,
+    last_active_date   TEXT,
+    tasks_completed    INTEGER DEFAULT 0,
+    checklist_done     INTEGER DEFAULT 0,
+    projects_completed INTEGER DEFAULT 0,
+    workspaces_joined  INTEGER DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS user_badges (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    badge_id   TEXT NOT NULL,
+    earned_at  TEXT DEFAULT (datetime('now')),
+    UNIQUE(user_id, badge_id)
+  );
+  CREATE TABLE IF NOT EXISTS point_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    points     INTEGER NOT NULL,
+    ref_id     INTEGER,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+`);
+
 // Auto-create a Personal workspace for each user who doesn't have one yet,
 // and assign their existing projects to it.
 const unhoused = db.prepare(`
