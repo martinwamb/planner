@@ -164,16 +164,19 @@ Prioritise in this order:
 3. Nearest due dates next
 4. Spread across at least 2 different projects
 
+IMPORTANT: The "task" field must be copied EXACTLY (character for character) from the quoted title in the list above — e.g. "Mobile App creation", not a checklist item beneath it.
+The "items" field should contain one checklist item from the → lines beneath that task.
+
 Respond ONLY with valid JSON, no markdown:
 {
   "summary": "one encouraging sentence about today's focus",
   "blocks": [
     {
       "label": "Top Priority",
-      "project": "exact project name",
+      "project": "exact project name from above",
       "color": "exact hex color",
-      "task": "exact task title",
-      "items": ["one specific next action from the checklist above"],
+      "task": "EXACT task title from the quoted titles above",
+      "items": ["one → checklist item from beneath that task"],
       "reason": "one sentence: why this task today"
     }
   ]
@@ -190,15 +193,46 @@ Use exactly one "Top Priority", one or two "Important", and optionally one "If t
     parsed = JSON.parse(match[0]);
   }
 
-  // Enrich blocks with IDs for clickable navigation in the UI
+  // Enrich blocks with project_id and task_id for clickable navigation
   if (parsed.blocks) {
     for (const block of parsed.blocks) {
-      const proj = projects.find(p => p.name.toLowerCase() === block.project?.toLowerCase());
-      if (proj) {
-        block.project_id = proj.id;
-        const task = db.prepare('SELECT id FROM tasks WHERE project_id = ? AND title = ? LIMIT 1').get(proj.id, block.task);
-        if (task) block.task_id = task.id;
+      // Match project — try exact then case-insensitive
+      const proj = projects.find(p => p.name === block.project)
+                || projects.find(p => p.name.toLowerCase() === block.project?.toLowerCase());
+      if (!proj) continue;
+      block.project_id = proj.id;
+
+      // 1. Try exact task title match
+      let task = db.prepare('SELECT id, title FROM tasks WHERE project_id = ? AND title = ? LIMIT 1')
+        .get(proj.id, block.task);
+
+      // 2. Case-insensitive match (AI sometimes changes capitalisation)
+      if (!task) {
+        task = db.prepare('SELECT id, title FROM tasks WHERE project_id = ? AND LOWER(title) = LOWER(?) LIMIT 1')
+          .get(proj.id, block.task);
       }
+
+      // 3. Partial match — block.task is a substring of a real task title
+      if (!task) {
+        task = db.prepare("SELECT id, title FROM tasks WHERE project_id = ? AND LOWER(title) LIKE '%' || LOWER(?) || '%' LIMIT 1")
+          .get(proj.id, block.task);
+      }
+
+      // 4. The AI used a checklist item text instead of the task title — find the parent task
+      if (!task) {
+        const row = db.prepare(`
+          SELECT t.id, t.title FROM tasks t
+          JOIN checklist_items ci ON ci.task_id = t.id
+          WHERE t.project_id = ? AND LOWER(ci.text) = LOWER(?)
+          LIMIT 1
+        `).get(proj.id, block.task);
+        if (row) {
+          task = row;
+          block.task = row.title; // Correct the displayed title to the real task name
+        }
+      }
+
+      if (task) block.task_id = task.id;
     }
   }
 
