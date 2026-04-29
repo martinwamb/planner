@@ -91,9 +91,10 @@ async function generateAndCacheDailyPlan(userId, date) {
 
   if (!projects.length) return { summary: 'No active projects.', blocks: [] };
 
-  // Read last 3 days of plans to know which tasks were recently recommended
+  // Build exclusion list from the last 5 plans — tasks in here are hidden from the AI
+  // unless they are overdue or due within 2 days (urgency overrides rotation).
   const recentPlans = db.prepare(
-    'SELECT plan_json FROM daily_plans WHERE user_id = ? AND date < ? ORDER BY date DESC LIMIT 3'
+    'SELECT plan_json FROM daily_plans WHERE user_id = ? AND date < ? ORDER BY date DESC LIMIT 5'
   ).all(userId, date);
   const recentlyFeatured = new Set();
   for (const rp of recentPlans) {
@@ -103,59 +104,65 @@ async function generateAndCacheDailyPlan(userId, date) {
     } catch {}
   }
 
-  const projectsWithTasks = projects.map(p => {
-    // Include all non-done tasks ordered by due date so AI has full variety
-    const tasks = db.prepare(`
-      SELECT t.id, t.title, t.status, t.due_date
-      FROM tasks t WHERE t.project_id = ? AND t.status != 'done'
-      ORDER BY t.due_date ASC NULLS LAST, t.id ASC
-      LIMIT 8
-    `).all(p.id);
+  // Tasks are "urgent" if overdue OR due within the next 2 days
+  const urgentCutoff = new Date(date + 'T12:00:00');
+  urgentCutoff.setDate(urgentCutoff.getDate() + 2);
+  const urgentDate = urgentCutoff.toISOString().split('T')[0];
 
-    const enriched = tasks.map(t => {
-      const pending = db.prepare(
-        'SELECT text FROM checklist_items WHERE task_id = ? AND checked = 0 ORDER BY position ASC LIMIT 4'
-      ).all(t.id).map(i => i.text);
-      const doneCount = db.prepare(
-        'SELECT COUNT(*) as c FROM checklist_items WHERE task_id = ? AND checked = 1'
-      ).get(t.id)?.c || 0;
-      return { ...t, pending, doneCount };
-    });
+  function buildTaskList(excludeRecent) {
+    return projects.map(p => {
+      const tasks = db.prepare(`
+        SELECT t.id, t.title, t.status, t.due_date
+        FROM tasks t WHERE t.project_id = ? AND t.status != 'done'
+        ORDER BY t.due_date ASC NULLS LAST, t.id ASC
+      `).all(p.id);
 
-    return { ...p, tasks: enriched };
-  }).filter(p => p.tasks.length > 0);
+      const enriched = tasks.map(t => {
+        const pending = db.prepare(
+          'SELECT text FROM checklist_items WHERE task_id = ? AND checked = 0 ORDER BY position ASC LIMIT 4'
+        ).all(t.id).map(i => i.text);
+        const doneCount = db.prepare(
+          'SELECT COUNT(*) as c FROM checklist_items WHERE task_id = ? AND checked = 1'
+        ).get(t.id)?.c || 0;
+        return { ...t, pending, doneCount };
+      }).filter(t => {
+        if (!excludeRecent) return true;
+        // Urgent tasks always included regardless of recency
+        if (t.due_date && t.due_date <= urgentDate) return true;
+        // Hard-exclude recently featured tasks — don't even show them to the AI
+        return !recentlyFeatured.has(t.title.toLowerCase().trim());
+      });
 
-  if (!projectsWithTasks.length) {
-    return { summary: 'All tasks are done. Great work!', blocks: [] };
+      return { ...p, tasks: enriched };
+    }).filter(p => p.tasks.length > 0);
   }
 
-  const recentNote = recentlyFeatured.size > 0
-    ? `\nTasks featured in the LAST 3 DAYS — skip these today unless overdue or due today:\n${[...recentlyFeatured].map(t => `  - "${t}"`).join('\n')}\n`
-    : '';
+  let projectsWithTasks = buildTaskList(true);
+
+  // Safety: if exclusion left nothing, fall back to all tasks (rotation fully cycled)
+  if (!projectsWithTasks.length) projectsWithTasks = buildTaskList(false);
+  if (!projectsWithTasks.length) return { summary: 'All tasks are done. Great work!', blocks: [] };
 
   const projectList = projectsWithTasks.map(p =>
-    `Project: "${p.name}" (priority: ${p.priority}, deadline: ${p.deadline || 'none'}, color: ${p.color})\n` +
+    `Project: "${p.name}" (deadline: ${p.deadline || 'none'}, color: ${p.color})\n` +
     p.tasks.map(t => {
-      const due      = t.due_date ? ` | due: ${t.due_date}` : '';
-      const progress = t.doneCount > 0 ? ` | ${t.doneCount} items already done` : '';
-      const recent   = recentlyFeatured.has(t.title.toLowerCase().trim()) ? ' [FEATURED RECENTLY]' : '';
-      const items    = t.pending.length ? `\n    Next items: ${t.pending.slice(0, 3).join(' | ')}` : '';
-      return `  Task: "${t.title}" [${t.status}${due}${progress}${recent}]${items}`;
+      const due     = t.due_date ? ` | due ${t.due_date}` : ' | no due date';
+      const urgTag  = t.due_date && t.due_date < date  ? ' ⚠ OVERDUE' :
+                      t.due_date && t.due_date <= urgentDate ? ' ⚡ DUE SOON' : '';
+      const items   = t.pending.length ? `\n    → ${t.pending.slice(0, 3).join('\n    → ')}` : '';
+      return `  "${t.title}" [${t.status}${due}${urgTag}]${items}`;
     }).join('\n')
   ).join('\n\n');
 
-  const prompt = `Today is ${date}. You are a productivity coach building a daily work plan.
+  const prompt = `Today is ${date}. Choose 3-4 tasks for today's work plan from the list below.
 
-Projects and tasks:
 ${projectList}
-${recentNote}
-RULES — follow these strictly:
-1. ROTATE: Never pick a task marked [FEATURED RECENTLY] unless its due date is today or it is overdue.
-2. PROGRESS: A task with "items already done" has had attention — move to a DIFFERENT task today.
-3. VARIETY: Pick tasks from at least 2 different projects when possible.
-4. DEADLINES: Tasks with due_date = today or earlier are urgent — always include them.
-5. ONE TASK PER PROJECT per day maximum (unless a project has an urgent + a normal task).
-6. Suggest only 1-2 checklist items per task — not the whole list.
+
+Prioritise in this order:
+1. ⚠ OVERDUE tasks — must appear
+2. ⚡ DUE SOON tasks — should appear
+3. Nearest due dates next
+4. Spread across at least 2 different projects
 
 Respond ONLY with valid JSON, no markdown:
 {
@@ -164,15 +171,15 @@ Respond ONLY with valid JSON, no markdown:
     {
       "label": "Top Priority",
       "project": "exact project name",
-      "color": "exact hex color from above",
+      "color": "exact hex color",
       "task": "exact task title",
-      "items": ["one specific checklist item to do today"],
+      "items": ["one specific next action from the checklist above"],
       "reason": "one sentence: why this task today"
     }
   ]
 }
 
-Use labels: "Top Priority", "Important", "If time allows". Max 4 blocks.`;
+Use exactly one "Top Priority", one or two "Important", and optionally one "If time allows". Max 4 blocks.`;
 
   const raw = await chat(prompt, { json: true });
   let parsed;
