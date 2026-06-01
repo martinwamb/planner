@@ -249,6 +249,24 @@ router.patch('/checklist/:id', (req, res) => {
   res.json({ ok: true, task_status, project_progress });
 });
 
+// PATCH /api/tasks/:id/snooze — push due_date forward, letting other tasks surface
+router.patch('/tasks/:id/snooze', (req, res) => {
+  const task = db.prepare('SELECT t.* FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = ? AND p.user_id = ?')
+    .get(req.params.id, req.user.id);
+  if (!task) return res.status(404).json({ error: 'Not found' });
+
+  const days = Math.max(1, Math.min(30, parseInt(req.body.days) || 3));
+  const today = new Date().toISOString().split('T')[0];
+  const base  = task.due_date && task.due_date >= today ? task.due_date : today;
+  const d = new Date(base + 'T12:00:00');
+  d.setDate(d.getDate() + days);
+  const newDueDate = d.toISOString().split('T')[0];
+
+  db.prepare("UPDATE tasks SET due_date = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(newDueDate, req.params.id);
+  res.json({ ok: true, due_date: newDueDate });
+});
+
 // DELETE /api/tasks/:id
 router.delete('/tasks/:id', (req, res) => {
   const task = db.prepare('SELECT t.* FROM tasks t JOIN projects p ON p.id = t.project_id WHERE t.id = ? AND p.user_id = ?').get(req.params.id, req.user.id);

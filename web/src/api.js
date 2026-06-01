@@ -102,6 +102,7 @@ export const api = {
   createTask:     (pid, body)  => request(`/projects/${pid}/tasks`, { method: 'POST', body: JSON.stringify(body) }),
   updateTask:     (id, body)   => request(`/tasks/${id}`,           { method: 'PUT',  body: JSON.stringify(body) }),
   moveTask:       (id, status) => request(`/tasks/${id}/status`,    { method: 'PATCH', body: JSON.stringify({ status }) }),
+  snoozeTask:     (id, days)   => request(`/tasks/${id}/snooze`,    { method: 'PATCH', body: JSON.stringify({ days }) }),
   deleteTask:     (id)         => request(`/tasks/${id}`,           { method: 'DELETE' }),
   toggleChecklist:(id, checked)=> request(`/checklist/${id}`,       { method: 'PATCH', body: JSON.stringify({ checked }) }),
 

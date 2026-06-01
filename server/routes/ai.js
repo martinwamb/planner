@@ -192,7 +192,7 @@ router.post('/daily-digest', async (req, res) => {
   const stopPing = openSSE(res);
   try {
     const plan = await generateAndCacheDailyPlan(req.user.id, today);
-    const html  = formatDailyEmailHtml(plan, dayLabel);
+    const html  = formatDailyEmailHtml(plan, dayLabel, req.user.id);
     await sendMail({ to: user.email, subject: `Your plan for ${dayLabel}`, html });
     sseJSON(res, stopPing, { ok: true, sent_to: user.email });
   } catch (err) {

@@ -1,5 +1,15 @@
+const crypto = require('crypto');
 const db = require('./db');
 const { chat } = require('./ollama');
+
+function makeSnoozeUrl(userId, taskId, days) {
+  const exp    = Math.floor(Date.now() / 1000) + 48 * 3600;
+  const secret = process.env.JWT_SECRET || 'planner-dev-secret';
+  const sig    = crypto.createHmac('sha256', secret)
+    .update(`${userId}:${taskId}:${days}:${exp}`).digest('hex');
+  const base   = (process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
+  return `${base}/api/snooze?tid=${taskId}&uid=${userId}&days=${days}&exp=${exp}&sig=${sig}`;
+}
 
 const QUOTES = [
   "Believe you can and you're halfway there.",
@@ -17,11 +27,18 @@ function labelStyle(label) {
   return 'background:#f9fafb;color:#6b7280;border:1px solid #e5e7eb;';
 }
 
-function formatDailyEmailHtml(plan, dayLabel) {
+function formatDailyEmailHtml(plan, dayLabel, userId) {
   const quote = QUOTES[new Date().getDay() % QUOTES.length];
 
   const blocks = (plan.blocks || []).map(block => {
     const items = (block.items || []).slice(0, 3);
+    const snoozeBar = userId && block.task_id ? `
+      <div style="padding:8px 16px 10px;border-top:1px solid #f3f4f6;">
+        <span style="font-size:11px;color:#9ca3af;">Reschedule: </span>
+        <a href="${makeSnoozeUrl(userId, block.task_id, 3)}"  style="font-size:11px;color:#6366f1;text-decoration:none;margin-left:6px;border:1px solid #e0e7ff;border-radius:6px;padding:2px 8px;">+3 days</a>
+        <a href="${makeSnoozeUrl(userId, block.task_id, 7)}"  style="font-size:11px;color:#6366f1;text-decoration:none;margin-left:6px;border:1px solid #e0e7ff;border-radius:6px;padding:2px 8px;">+1 week</a>
+        <a href="${makeSnoozeUrl(userId, block.task_id, 14)}" style="font-size:11px;color:#6366f1;text-decoration:none;margin-left:6px;border:1px solid #e0e7ff;border-radius:6px;padding:2px 8px;">+2 weeks</a>
+      </div>` : '';
     return `
       <div style="margin-bottom:12px;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">
         <div style="padding:12px 16px;background:#fafafa;border-bottom:1px solid #f0f0f0;">
@@ -33,7 +50,8 @@ function formatDailyEmailHtml(plan, dayLabel) {
           <p style="margin:0;font-size:15px;font-weight:600;color:#111827;">${block.task || ''}</p>
         </div>
         ${items.length ? `<div style="padding:10px 16px 6px;">${items.map(item => `<p style="margin:0 0 5px;color:#6b7280;font-size:13px;line-height:1.5;">· ${item}</p>`).join('')}</div>` : ''}
-        ${block.reason ? `<div style="padding:2px 16px 10px;"><p style="margin:0;color:#9ca3af;font-size:12px;font-style:italic;">${block.reason}</p></div>` : ''}
+        ${block.reason ? `<div style="padding:2px 16px 6px;"><p style="margin:0;color:#9ca3af;font-size:12px;font-style:italic;">${block.reason}</p></div>` : ''}
+        ${snoozeBar}
       </div>`;
   }).join('');
 

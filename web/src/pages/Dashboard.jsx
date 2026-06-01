@@ -34,6 +34,18 @@ export default function Dashboard() {
   const [inviting, setInviting]         = useState(false);
   const [rewards, setRewards]           = useState(null);
   const [showRewards, setShowRewards]   = useState(false);
+  const [todayPlan, setTodayPlan]       = useState(null);
+  const [planLoading, setPlanLoading]   = useState(false);
+  const [snoozed, setSnoozed]           = useState({}); // taskId -> new due_date
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const snoozedTask = params.get('snoozed');
+    if (snoozedTask && snoozedTask !== 'invalid' && snoozedTask !== 'expired' && snoozedTask !== 'notfound') {
+      setAiPanel({ snooze_notice: decodeURIComponent(snoozedTask) });
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
 
   useEffect(() => {
     api.getRewards().then(setRewards).catch(() => {});
@@ -140,6 +152,26 @@ export default function Dashboard() {
     finally { setAiLoading(false); }
   }
 
+  async function handleTodayPlan() {
+    if (todayPlan) { setTodayPlan(null); setSnoozed({}); return; }
+    setPlanLoading(true);
+    try {
+      const today = new Date().toLocaleDateString('en-CA');
+      const plan  = await api.getDailyPlan(today);
+      setTodayPlan(plan);
+    } catch { setTodayPlan({ error: "Could not load today's plan." }); }
+    finally { setPlanLoading(false); }
+  }
+
+  async function handleSnooze(taskId, days) {
+    try {
+      const result = await api.snoozeTask(taskId, days);
+      setSnoozed(prev => ({ ...prev, [taskId]: result.due_date }));
+    } catch (err) {
+      alert(err.message || 'Could not reschedule task');
+    }
+  }
+
   // Filtering
   let filtered = statusFilter === 'all' ? projects : projects.filter(p => p.status === statusFilter);
   if (tagFilter) filtered = filtered.filter(p => p.tags?.some(t => t.id === tagFilter));
@@ -179,9 +211,11 @@ export default function Dashboard() {
                 className="text-sm text-indigo-600 hover:text-indigo-800 px-3 py-2 rounded-lg hover:bg-indigo-50 transition-colors font-medium disabled:opacity-50">
                 {aiLoading ? '…' : '✦ AI Insights'}
               </button>
-              <button onClick={handleSendDailyDigest} disabled={aiLoading}
-                className="text-sm text-gray-500 hover:text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors hidden sm:block">
-                Today's plan
+              <button onClick={handleTodayPlan} disabled={planLoading}
+                className={`text-sm px-3 py-2 rounded-lg transition-colors hidden sm:block font-medium ${
+                  todayPlan ? 'text-indigo-600 bg-indigo-50 hover:bg-indigo-100' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+                }`}>
+                {planLoading ? '…' : "Today's plan"}
               </button>
               <button onClick={handleSendDigest} disabled={aiLoading}
                 className="text-sm text-gray-500 hover:text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors hidden sm:block">
@@ -284,6 +318,7 @@ export default function Dashboard() {
                 {aiPanel.error && <p className="text-sm text-rose-500">{aiPanel.error}</p>}
                 {aiPanel.digest_sent === 'weekly' && <p className="text-sm text-emerald-600">Weekly digest sent to your email.</p>}
                 {aiPanel.digest_sent === 'daily'  && <p className="text-sm text-emerald-600">Today's plan sent to your email.</p>}
+                {aiPanel.snooze_notice && <p className="text-sm text-indigo-600">"{aiPanel.snooze_notice}" rescheduled — a different task will appear tomorrow.</p>}
                 {aiPanel.summary && <p className="text-sm text-gray-700 mb-4">{aiPanel.summary}</p>}
                 <div className="grid sm:grid-cols-3 gap-4">
                   {aiPanel.top_priority?.length > 0 && (
@@ -316,6 +351,72 @@ export default function Dashboard() {
                       </ul>
                     </div>
                   )}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Today's Plan Panel */}
+        <AnimatePresence>
+          {todayPlan && (
+            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+              className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+              <div className="px-6 py-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-gray-900">Today's Focus</h3>
+                  <div className="flex items-center gap-2">
+                    <button onClick={handleSendDailyDigest} disabled={aiLoading}
+                      className="text-xs text-gray-500 hover:text-gray-700 px-2.5 py-1 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors disabled:opacity-50">
+                      {aiLoading ? '…' : 'Send email'}
+                    </button>
+                    <button onClick={() => { setTodayPlan(null); setSnoozed({}); }}
+                      className="text-gray-400 hover:text-gray-600 text-sm">✕</button>
+                  </div>
+                </div>
+                {todayPlan.error && <p className="text-sm text-rose-500">{todayPlan.error}</p>}
+                {todayPlan.summary && <p className="text-sm text-gray-500 mb-4 italic">{todayPlan.summary}</p>}
+                <div className="space-y-3">
+                  {(todayPlan.blocks || []).map(block => {
+                    const isSnoozed = snoozed[block.task_id];
+                    return (
+                      <div key={block.task_id || block.task}
+                        className={`border border-gray-100 rounded-xl overflow-hidden transition-opacity ${isSnoozed ? 'opacity-40' : ''}`}>
+                        <div className="px-4 py-3 bg-gray-50 flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1 flex-wrap">
+                              <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={
+                                block.label === 'Top Priority' ? { background: '#fff1f2', color: '#be123c', border: '1px solid #fecdd3' } :
+                                block.label === 'Important'    ? { background: '#fffbeb', color: '#b45309', border: '1px solid #fde68a' } :
+                                                                  { background: '#f9fafb', color: '#6b7280', border: '1px solid #e5e7eb' }
+                              }>{block.label}</span>
+                              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: block.color }} />
+                              <span className="text-xs text-gray-400 truncate">{block.project}</span>
+                            </div>
+                            <p className="text-sm font-semibold text-gray-900">{block.task}</p>
+                            {block.items?.[0] && <p className="text-xs text-gray-500 mt-0.5">· {block.items[0]}</p>}
+                          </div>
+                          {isSnoozed ? (
+                            <span className="text-xs text-gray-400 flex-shrink-0 mt-1 whitespace-nowrap">→ {isSnoozed}</span>
+                          ) : block.task_id ? (
+                            <div className="flex gap-1 flex-shrink-0">
+                              {[[3, '+3d'], [7, '+1w'], [14, '+2w']].map(([days, label]) => (
+                                <button key={days} onClick={() => handleSnooze(block.task_id, days)}
+                                  className="text-xs text-gray-400 hover:text-indigo-600 px-2 py-1 rounded-lg hover:bg-indigo-50 border border-gray-200 hover:border-indigo-200 transition-colors">
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                        {block.reason && (
+                          <div className="px-4 py-2 border-t border-gray-50">
+                            <p className="text-xs text-gray-400 italic">{block.reason}</p>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </motion.div>

@@ -157,7 +157,7 @@ function scheduleDailyPlanEmail() {
       try {
         const plan = await generateAndCacheDailyPlan(user.id, today);
         if (!plan.blocks?.length) continue;
-        const html = formatDailyEmailHtml(plan, dayLabel);
+        const html = formatDailyEmailHtml(plan, dayLabel, user.id);
         await sendMail({ to: user.email, subject: `Your plan for ${dayLabel}`, html });
         console.log(`[cron] Daily plan email sent to ${user.email}`);
       } catch (err) {
