@@ -2,7 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { requireAuth } = require('../auth');
 const { encrypt } = require('../crypto');
-const { listUserRepos, syncProject } = require('../github');
+const { listUserRepos, syncProject, scanAndImportRepos } = require('../github');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -98,6 +98,18 @@ router.get('/projects/:id/commits', (req, res) => {
     LIMIT 50
   `).all(req.params.id);
   res.json(commits);
+});
+
+// POST /api/github/scan-and-import — create a project per repo, bootstrap tasks from commits
+router.post('/scan-and-import', async (req, res) => {
+  const pat = db.prepare('SELECT github_pat_enc FROM users WHERE id = ?').get(req.user.id);
+  if (!pat?.github_pat_enc) return res.status(400).json({ error: 'No GitHub PAT configured. Set it via the GitHub icon in the dashboard.' });
+  try {
+    const results = await scanAndImportRepos(req.user.id);
+    res.json({ ok: true, ...results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

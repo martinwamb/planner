@@ -200,4 +200,115 @@ async function syncProject(project, userId) {
   }
 }
 
-module.exports = { listUserRepos, syncProject, fetchRecentCommits, matchCommitsToTasks, getDecryptedPat };
+async function bootstrapTasksFromCommits(projectId, userId) {
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+  if (!project?.github_repo) return;
+
+  const existing = db.prepare('SELECT COUNT(*) as c FROM tasks WHERE project_id = ?').get(projectId);
+  if (existing.c > 0) return;
+
+  let commits;
+  try {
+    commits = await fetchRecentCommits(userId, project.github_repo, null);
+  } catch (err) {
+    console.error(`[github] Could not fetch commits for bootstrap (project ${projectId}):`, err.message);
+    return;
+  }
+  if (!commits.length) return;
+
+  const commitList = commits.slice(0, 80).map((c, i) =>
+    `${i + 1}. [${c.committed_at?.slice(0, 10) || 'unknown'}] ${c.author}: "${c.message}"`
+  ).join('\n');
+
+  const prompt = `You are analyzing a GitHub repository's commit history to generate a project task list.
+
+Repository: ${project.github_repo}
+Recent commits (newest first):
+${commitList}
+
+Based on these commits, generate a list of tasks that represent the work done and work remaining.
+Rules:
+- Group related commits into meaningful tasks (not one task per commit)
+- Mark tasks "done" when commits clearly show completed features
+- Mark tasks "in-progress" when recent commits show active but unfinished work
+- Mark tasks "todo" when commits mention plans or TODOs not yet implemented
+- Generate 5-15 tasks maximum — quality over quantity
+- Task titles must be clear and actionable
+
+Respond ONLY with valid JSON:
+{"tasks":[{"title":"<task title>","status":"<todo|in-progress|done>"}]}`;
+
+  let parsed = { tasks: [] };
+  try {
+    const raw = await chat(prompt, { json: true });
+    try { parsed = JSON.parse(raw); }
+    catch { const m = raw.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); }
+  } catch (err) {
+    console.error(`[github] Bootstrap task generation failed for project ${projectId}:`, err.message);
+    return;
+  }
+
+  const insert = db.prepare(`
+    INSERT INTO tasks (project_id, title, status, position, created_at, updated_at)
+    VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+  `);
+  const validStatuses = new Set(['todo', 'in-progress', 'review', 'done']);
+  (parsed.tasks || []).forEach((t, i) => {
+    if (!t.title?.trim()) return;
+    insert.run(projectId, t.title.trim(), validStatuses.has(t.status) ? t.status : 'todo', i);
+  });
+  console.log(`[github] Bootstrapped ${parsed.tasks?.length || 0} tasks for project ${projectId} (${project.github_repo})`);
+}
+
+async function scanAndImportRepos(userId) {
+  const repos = await listUserRepos(userId);
+  const userProjects = db.prepare('SELECT * FROM projects WHERE user_id = ?').all(userId);
+
+  const ws = db.prepare(
+    "SELECT w.id FROM workspaces w JOIN workspace_members wm ON wm.workspace_id = w.id WHERE wm.user_id = ? AND w.name = 'Personal' LIMIT 1"
+  ).get(userId);
+
+  const results = { created: 0, linked: 0, skipped: 0, tasks_created: 0 };
+
+  const normalize = s => s.toLowerCase().replace(/[-_.]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  for (const repo of repos) {
+    const repoShortName = normalize(repo.full_name.split('/')[1]);
+    const match = userProjects.find(p =>
+      normalize(p.name) === repoShortName || p.github_repo === repo.full_name
+    );
+
+    let project;
+    if (match) {
+      if (!match.github_repo) {
+        db.prepare(`UPDATE projects SET github_repo = ?, github_last_synced_at = NULL, updated_at = datetime('now') WHERE id = ?`)
+          .run(repo.full_name, match.id);
+        results.linked++;
+        match.github_repo = repo.full_name;
+      } else {
+        results.skipped++;
+      }
+      project = match;
+    } else {
+      const prettyName = repo.full_name.split('/')[1]
+        .replace(/[-_.]/g, ' ')
+        .replace(/\b\w/g, c => c.toUpperCase());
+      const result = db.prepare(`
+        INSERT INTO projects (user_id, name, description, color, priority, status, workspace_id, github_repo, created_at, updated_at)
+        VALUES (?, ?, ?, '#6366f1', 'medium', 'planning', ?, ?, datetime('now'), datetime('now'))
+      `).run(userId, prettyName, repo.description || '', ws?.id || null, repo.full_name);
+      project = db.prepare('SELECT * FROM projects WHERE id = ?').get(result.lastInsertRowid);
+      userProjects.push(project);
+      results.created++;
+    }
+
+    const tasksBefore = db.prepare('SELECT COUNT(*) as c FROM tasks WHERE project_id = ?').get(project.id).c;
+    await bootstrapTasksFromCommits(project.id, userId);
+    const tasksAfter = db.prepare('SELECT COUNT(*) as c FROM tasks WHERE project_id = ?').get(project.id).c;
+    results.tasks_created += (tasksAfter - tasksBefore);
+  }
+
+  return results;
+}
+
+module.exports = { listUserRepos, syncProject, fetchRecentCommits, matchCommitsToTasks, getDecryptedPat, bootstrapTasksFromCommits, scanAndImportRepos };

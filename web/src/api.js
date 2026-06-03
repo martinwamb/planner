@@ -112,8 +112,9 @@ export const api = {
   deleteGitHubPat:   ()          => request('/github/pat',                   { method: 'DELETE' }),
   listGitHubRepos:   ()          => request('/github/repos'),
   linkGitHubRepo:    (pid, repo) => request(`/github/projects/${pid}/link`,  { method: 'POST',   body: JSON.stringify({ repo }) }),
-  syncGitHubProject: (pid)       => request(`/github/projects/${pid}/sync`,  { method: 'POST' }),
-  getProjectCommits: (pid)       => request(`/github/projects/${pid}/commits`),
+  syncGitHubProject:   (pid) => request(`/github/projects/${pid}/sync`,  { method: 'POST' }),
+  getProjectCommits:   (pid) => request(`/github/projects/${pid}/commits`),
+  scanAndImportRepos:  ()    => request('/github/scan-and-import', { method: 'POST' }),
 
   // AI — all use SSE streaming so the connection stays alive during long generations
   suggestTimeline:   (body) => streamRequest('/ai/suggest-timeline',   { method: 'POST', body: JSON.stringify(body) }),
