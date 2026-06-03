@@ -168,4 +168,27 @@ function scheduleDailyPlanEmail() {
   console.log('[cron] Daily plan email scheduled for weekdays at 07:30 EAT');
 }
 
-module.exports = { scheduleWeeklyDigest, scheduleDailyEnhancement, scheduleDailyPlanEmail };
+// ─── GitHub sync ──────────────────────────────────────────────────────────────
+function scheduleGitHubSync() {
+  const { syncProject } = require('./github');
+  cron.schedule('*/30 * * * *', async () => {
+    console.log('[cron] Running GitHub sync...');
+    try {
+      const projects = db.prepare(`
+        SELECT p.*, u.github_pat_enc
+        FROM projects p
+        JOIN users u ON u.id = p.user_id
+        WHERE p.github_repo IS NOT NULL AND u.github_pat_enc IS NOT NULL
+      `).all();
+      for (const p of projects) {
+        await syncProject(p, p.user_id);
+      }
+      console.log(`[cron] GitHub sync complete (${projects.length} project(s))`);
+    } catch (err) {
+      console.error('[cron] GitHub sync failed:', err.message);
+    }
+  });
+  console.log('[cron] GitHub sync scheduled every 30 minutes');
+}
+
+module.exports = { scheduleWeeklyDigest, scheduleDailyEnhancement, scheduleDailyPlanEmail, scheduleGitHubSync };

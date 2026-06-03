@@ -63,7 +63,7 @@ router.get('/:id', (req, res) => {
 
 // POST /api/projects
 router.post('/', (req, res) => {
-  const { name, description, color, priority, status, deadline, progress, notes, tag_ids, workspace_id } = req.body;
+  const { name, description, color, priority, status, deadline, progress, notes, tag_ids, workspace_id, github_repo } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Name is required' });
 
   // Default to the user's Personal workspace if none specified
@@ -72,8 +72,8 @@ router.post('/', (req, res) => {
   ).get(req.user.id)?.id || null;
 
   const result = db.prepare(`
-    INSERT INTO projects (user_id, name, description, color, priority, status, deadline, progress, notes, workspace_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO projects (user_id, name, description, color, priority, status, deadline, progress, notes, workspace_id, github_repo)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     req.user.id,
     name.trim(),
@@ -84,7 +84,8 @@ router.post('/', (req, res) => {
     deadline || null,
     progress ?? 0,
     notes || '',
-    wsId
+    wsId,
+    github_repo || null
   );
 
   syncTags(result.lastInsertRowid, tag_ids);
@@ -99,12 +100,12 @@ router.put('/:id', (req, res) => {
   ).get(req.params.id, req.user.id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
 
-  const { name, description, color, priority, status, deadline, progress, notes, tag_ids } = req.body;
+  const { name, description, color, priority, status, deadline, progress, notes, tag_ids, github_repo } = req.body;
 
   db.prepare(`
     UPDATE projects SET
       name = ?, description = ?, color = ?, priority = ?, status = ?,
-      deadline = ?, progress = ?, notes = ?, updated_at = datetime('now')
+      deadline = ?, progress = ?, notes = ?, github_repo = ?, updated_at = datetime('now')
     WHERE id = ?
   `).run(
     name ?? existing.name,
@@ -115,6 +116,7 @@ router.put('/:id', (req, res) => {
     deadline !== undefined ? deadline : existing.deadline,
     progress ?? existing.progress,
     notes ?? existing.notes,
+    github_repo !== undefined ? (github_repo || null) : existing.github_repo,
     req.params.id
   );
 

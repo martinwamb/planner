@@ -106,6 +106,15 @@ export const api = {
   deleteTask:     (id)         => request(`/tasks/${id}`,           { method: 'DELETE' }),
   toggleChecklist:(id, checked)=> request(`/checklist/${id}`,       { method: 'PATCH', body: JSON.stringify({ checked }) }),
 
+  // GitHub integration
+  getGitHubPat:      ()          => request('/github/pat'),
+  saveGitHubPat:     (token)     => request('/github/pat',                   { method: 'PUT',    body: JSON.stringify({ token }) }),
+  deleteGitHubPat:   ()          => request('/github/pat',                   { method: 'DELETE' }),
+  listGitHubRepos:   ()          => request('/github/repos'),
+  linkGitHubRepo:    (pid, repo) => request(`/github/projects/${pid}/link`,  { method: 'POST',   body: JSON.stringify({ repo }) }),
+  syncGitHubProject: (pid)       => request(`/github/projects/${pid}/sync`,  { method: 'POST' }),
+  getProjectCommits: (pid)       => request(`/github/projects/${pid}/commits`),
+
   // AI — all use SSE streaming so the connection stays alive during long generations
   suggestTimeline:   (body) => streamRequest('/ai/suggest-timeline',   { method: 'POST', body: JSON.stringify(body) }),
   enhanceTask:       (body) => streamRequest('/ai/enhance-task',       { method: 'POST', body: JSON.stringify(body) }),

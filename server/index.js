@@ -4,7 +4,7 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
 const db = require('./db');
-const { scheduleWeeklyDigest, scheduleDailyEnhancement, scheduleDailyPlanEmail } = require('./cron');
+const { scheduleWeeklyDigest, scheduleDailyEnhancement, scheduleDailyPlanEmail, scheduleGitHubSync } = require('./cron');
 const { enhanceAllUnenhanced, enhanceAllDates } = require('./enhancer');
 const { backfill: rewardsBackfill } = require('./rewards');
 
@@ -53,10 +53,12 @@ app.use('/api', require('./routes/tasks'));
 app.use('/api/ai', require('./routes/ai'));
 app.use('/api/workspaces', require('./routes/workspaces'));
 app.use('/api/rewards',   require('./routes/rewards'));
+app.use('/api/github',    require('./routes/github'));
 
 scheduleWeeklyDigest();
 scheduleDailyEnhancement();
 scheduleDailyPlanEmail();
+scheduleGitHubSync();
 
 app.listen(PORT, () => {
   console.log(`Planner server running on port ${PORT}`);

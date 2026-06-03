@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { api } from '../api';
 import ProjectModal from '../components/ProjectModal';
 import TaskModal from '../components/TaskModal';
+import GitHubCommitsPanel from '../components/GitHubCommitsPanel';
 import { getStatus, getPriority, formatDeadline } from '../constants';
 
 const COLUMNS = [
@@ -282,6 +283,19 @@ export default function ProjectDetail() {
                 </div>
               )}
             </div>
+
+            {/* GitHub commits panel — only shown when a repo is linked */}
+            {project.github_repo && (
+              <GitHubCommitsPanel
+                projectId={project.id}
+                repo={project.github_repo}
+                lastSyncedAt={project.github_last_synced_at}
+                onSynced={() => {
+                  api.getTasks(project.id).then(setTasks);
+                  api.getProject(project.id).then(setProject);
+                }}
+              />
+            )}
 
             {/* Kanban board */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pb-6">

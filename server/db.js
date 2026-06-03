@@ -169,4 +169,25 @@ for (const u of unhoused) {
   db.prepare(`UPDATE projects SET workspace_id = ? WHERE user_id = ? AND workspace_id IS NULL`).run(ws.lastInsertRowid, u.id);
 }
 
+// GitHub integration
+try { db.exec(`ALTER TABLE users ADD COLUMN github_pat_enc TEXT`); } catch (_) {}
+try { db.exec(`ALTER TABLE projects ADD COLUMN github_repo TEXT`); } catch (_) {}
+try { db.exec(`ALTER TABLE projects ADD COLUMN github_last_synced_at TEXT`); } catch (_) {}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS github_commits (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id    INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    sha           TEXT NOT NULL,
+    message       TEXT NOT NULL,
+    author        TEXT,
+    committed_at  TEXT,
+    files_json    TEXT DEFAULT '[]',
+    ai_summary    TEXT,
+    processed     INTEGER DEFAULT 0,
+    created_at    TEXT DEFAULT (datetime('now')),
+    UNIQUE(project_id, sha)
+  );
+`);
+
 module.exports = db;
