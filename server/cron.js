@@ -193,4 +193,41 @@ function scheduleGitHubSync() {
   console.log('[cron] GitHub sync scheduled every 30 minutes');
 }
 
-module.exports = { scheduleWeeklyDigest, scheduleDailyEnhancement, scheduleDailyPlanEmail, scheduleGitHubSync };
+// ─── Auto code generation ─────────────────────────────────────────────────────
+function scheduleCodeGeneration() {
+  const { generateAndStoreCodeForTask } = require('./codeGen');
+
+  cron.schedule('0 2 * * *', async () => {
+    console.log('[cron] Running background code generation...');
+    try {
+      // Eligible: github-linked project, not done, no draft yet, meaningful title
+      const tasks = db.prepare(`
+        SELECT t.id, t.title FROM tasks t
+        JOIN projects p ON p.id = t.project_id
+        JOIN users u ON u.id = p.user_id
+        WHERE p.github_repo IS NOT NULL
+          AND t.status != 'done'
+          AND t.code_generated_at IS NULL
+          AND length(t.title) > 5
+        LIMIT 15
+      `).all();
+
+      console.log(`[cron] Code gen: ${tasks.length} task(s) to process`);
+      for (const task of tasks) {
+        try {
+          await generateAndStoreCodeForTask(task.id);
+        } catch (err) {
+          console.error(`[cron] Code gen failed for task ${task.id} "${task.title}":`, err.message);
+        }
+        // 8-second pause — code prompts are long; give Ollama breathing room
+        await new Promise(r => setTimeout(r, 8000));
+      }
+      console.log('[cron] Background code generation complete');
+    } catch (err) {
+      console.error('[cron] Code generation cron error:', err.message);
+    }
+  }, { timezone: 'Africa/Nairobi' });
+  console.log('[cron] Background code generation scheduled for 02:00 EAT');
+}
+
+module.exports = { scheduleWeeklyDigest, scheduleDailyEnhancement, scheduleDailyPlanEmail, scheduleGitHubSync, scheduleCodeGeneration };

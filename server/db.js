@@ -201,4 +201,10 @@ db.exec(`
   );
 `);
 
+// Code drafts — auto-generated code stored per task for background review
+try { db.exec(`ALTER TABLE tasks ADD COLUMN code_draft TEXT`); } catch (_) {}
+try { db.exec(`ALTER TABLE tasks ADD COLUMN code_filename TEXT`); } catch (_) {}
+try { db.exec(`ALTER TABLE tasks ADD COLUMN code_notes TEXT`); } catch (_) {}
+try { db.exec(`ALTER TABLE tasks ADD COLUMN code_generated_at TEXT`); } catch (_) {}
+
 module.exports = db;

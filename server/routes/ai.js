@@ -7,6 +7,7 @@ const { generateAndCacheDailyPlan, formatDailyEmailHtml } = require('../planHelp
 const { buildPrompt, getProjectContextByProjectId } = require('../enhancer');
 const { getDecryptedPat, ghPut, ghPost, ghGet: githubGet } = require('../github');
 const { log: logActivity } = require('../activityLog');
+const { generateAndStoreCodeForTask, parseCodeResponse } = require('../codeGen');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -354,56 +355,28 @@ Include exactly 5 days. Use 1-2 blocks per day maximum.`;
 });
 
 // ─── POST /api/ai/code-for-task ──────────────────────────────────────────────
-// SSE — streams qwen-generated code for a task based on its title, checklist,
-// and recent commit history. No model switch, no repo clone.
+// SSE — (re)generates code for a task and stores it to DB for future review.
+// Uses the shared codeGen module so cron and manual triggers produce identical results.
 router.post('/code-for-task', async (req, res) => {
   const { taskId } = req.body;
   if (!taskId) return res.status(400).json({ error: 'taskId required' });
 
+  // Verify task belongs to this user
   const task = db.prepare(`
-    SELECT t.*, p.name as project_name, p.github_repo, p.description as project_description
-    FROM tasks t
+    SELECT t.id FROM tasks t
     JOIN projects p ON p.id = t.project_id
     WHERE t.id = ? AND p.user_id = ?
   `).get(taskId, req.user.id);
   if (!task) return res.status(404).json({ error: 'Task not found' });
-  if (!task.github_repo) return res.status(400).json({ error: 'This task\'s project is not linked to a GitHub repo' });
 
-  const checklist = db.prepare('SELECT text, checked FROM checklist_items WHERE task_id = ? ORDER BY position').all(taskId);
-  const recentCommits = db.prepare(
-    'SELECT message, author FROM github_commits WHERE project_id = ? ORDER BY committed_at DESC LIMIT 10'
-  ).all(task.project_id);
-
-  const checklistText = checklist.length
-    ? checklist.map(c => `${c.checked ? '✓' : '○'} ${c.text}`).join('\n')
-    : '(no checklist items)';
-
-  const commitsText = recentCommits.length
-    ? recentCommits.map(c => `- ${c.author}: "${c.message}"`).join('\n')
-    : '(no commit history yet)';
-
-  const prompt = `You are an expert software developer working on the "${task.project_name}" project (GitHub: ${task.github_repo}).
-
-TASK TO IMPLEMENT: ${task.title}
-${task.problem_statement ? `GOAL: ${task.problem_statement}` : ''}
-
-CHECKLIST (steps needed):
-${checklistText}
-
-RECENT COMMITS (for code style context):
-${commitsText}
-
-Write COMPLETE, RUNNABLE code to implement this task. Follow the patterns suggested by the commit history.
-Keep it focused and practical.
-
-After your code, on new lines write exactly:
-FILE: <suggested relative file path e.g. src/components/Login.jsx>
-NOTES: <2 sentences explaining what you implemented and how to use it>`;
+  // Reset generated_at so cron will re-process after a manual regeneration
+  db.prepare(`UPDATE tasks SET code_generated_at = NULL WHERE id = ?`).run(taskId);
 
   const stopPing = openSSE(res);
   try {
-    const raw = await chat(prompt, { json: false });
-    sseJSON(res, stopPing, { raw });
+    const result = await generateAndStoreCodeForTask(taskId);
+    if (!result) return sseError(res, stopPing, 'Task is not eligible for code generation');
+    sseJSON(res, stopPing, { raw: `${result.code}\n\nFILE: ${result.filename}\nNOTES: ${result.notes}` });
   } catch (err) {
     console.error('[ai] code-for-task error:', err.message);
     sseError(res, stopPing, 'AI unavailable — make sure Ollama is running.');

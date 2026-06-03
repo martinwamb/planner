@@ -58,6 +58,19 @@ export default function TaskModal({ task, projectId, githubRepo, onSave, onClose
         checklist:           task.checklist?.map(c => ({ ...c })) || [],
       });
       setTab(hasNew ? 'summary' : 'notes');
+
+      // Pre-fill code draft if one was generated in the background
+      if (task.code_draft) {
+        setGeneratedCode(task.code_draft);
+        setCodeFilename(task.code_filename || 'generated.js');
+        setCodeNotes(task.code_notes || '');
+        setCodeState('preview');
+      } else {
+        setGeneratedCode('');
+        setCodeFilename('');
+        setCodeNotes('');
+        setCodeState('idle');
+      }
     }
   }, [task]);
 
@@ -340,9 +353,16 @@ export default function TaskModal({ task, projectId, githubRepo, onSave, onClose
             {/* Code generation — only for tasks in GitHub-linked projects */}
             {githubRepo && task?.id && (
               <div className="border border-gray-100 rounded-xl p-4 space-y-3 bg-gray-50">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Generate Code</span>
-                  <span className="text-xs text-gray-400">· {githubRepo}</span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    {task?.code_draft ? 'Code Draft' : 'Generate Code'}
+                  </span>
+                  {task?.code_generated_at && (
+                    <span className="text-xs text-gray-400">
+                      generated {new Date(task.code_generated_at + 'Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                    </span>
+                  )}
+                  <span className="text-xs text-gray-300">· {githubRepo}</span>
                 </div>
 
                 {codeState === 'idle' && (
@@ -386,7 +406,7 @@ export default function TaskModal({ task, projectId, githubRepo, onSave, onClose
                         className="w-full text-xs font-mono border border-gray-200 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-y bg-white"
                       />
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
                       <button type="button" onClick={handlePushCode} disabled={codeState === 'pushing'}
                         className="flex-1 bg-gray-900 text-white text-sm font-medium py-2 rounded-xl hover:bg-gray-700 transition-colors disabled:opacity-50">
                         {codeState === 'pushing' ? 'Opening PR…' : 'Push to GitHub & Open PR'}
@@ -395,9 +415,10 @@ export default function TaskModal({ task, projectId, githubRepo, onSave, onClose
                         className="px-3 py-2 text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded-xl hover:bg-white transition-colors">
                         Copy
                       </button>
-                      <button type="button" onClick={() => setCodeState('idle')}
-                        className="px-3 py-2 text-xs text-gray-400 hover:text-gray-600 transition-colors">
-                        ✕
+                      <button type="button" onClick={handleGenerateCode}
+                        title="Regenerate with fresh AI output"
+                        className="px-3 py-2 text-xs text-gray-400 hover:text-gray-600 border border-gray-200 rounded-xl hover:bg-white transition-colors">
+                        ↺
                       </button>
                     </div>
                   </div>
