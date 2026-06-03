@@ -47,6 +47,70 @@ function ghGet(path, token) {
   });
 }
 
+function ghPut(path, token, body) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const req = https.request({
+      hostname: GH_API,
+      path,
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/vnd.github+json',
+        'User-Agent': 'Planner-App/1.0',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+      },
+    }, res => {
+      let respBody = '';
+      res.on('data', c => respBody += c);
+      res.on('end', () => {
+        if (res.statusCode === 401) return reject(new Error('GitHub PAT invalid or expired'));
+        if (res.statusCode === 403) return reject(new Error('GitHub rate limit hit or insufficient scope'));
+        if (res.statusCode === 422) return reject(new Error('GitHub rejected the file — check filename and content'));
+        try { resolve(JSON.parse(respBody)); }
+        catch { reject(new Error(`GitHub returned non-JSON (status ${res.statusCode}): ${respBody.slice(0, 200)}`)); }
+      });
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+function ghPost(path, token, body) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const req = https.request({
+      hostname: GH_API,
+      path,
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/vnd.github+json',
+        'User-Agent': 'Planner-App/1.0',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+      },
+    }, res => {
+      let respBody = '';
+      res.on('data', c => respBody += c);
+      res.on('end', () => {
+        if (res.statusCode === 401) return reject(new Error('GitHub PAT invalid or expired'));
+        if (res.statusCode === 403) return reject(new Error('GitHub rate limit or insufficient scope'));
+        if (res.statusCode === 422) return reject(new Error('GitHub rejected the request — branch may already exist or PR already open'));
+        try { resolve(JSON.parse(respBody)); }
+        catch { reject(new Error(`GitHub returned non-JSON (status ${res.statusCode})`)); }
+      });
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 function getDecryptedPat(userId) {
   const row = db.prepare('SELECT github_pat_enc FROM users WHERE id = ?').get(userId);
   if (!row?.github_pat_enc) throw new Error('No GitHub PAT configured');
@@ -378,4 +442,5 @@ module.exports = {
   listUserRepos, syncProject, fetchRecentCommits,
   matchCommitsToTasks, getDecryptedPat,
   bootstrapTasksFromCommits, scanAndImportRepos,
+  ghGet, ghPut, ghPost,
 };

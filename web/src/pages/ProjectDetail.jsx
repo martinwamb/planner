@@ -395,6 +395,7 @@ export default function ProjectDetail() {
         )}
         {taskModal && (
           <TaskModal task={taskModal === 'new' ? null : taskModal} projectId={id}
+            githubRepo={project?.github_repo || null}
             onSave={handleSaveTask} onClose={() => setTaskModal(null)} />
         )}
         {deleteTarget && (

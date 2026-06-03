@@ -125,6 +125,10 @@ export const api = {
   deleteUnlinkedProjects:  ()    => request('/github/unlinked-projects', { method: 'DELETE' }),
   getActivityLog:          ()    => request('/github/activity'),
 
+  // AI code generation
+  generateTaskCode: (taskId) => streamRequest('/ai/code-for-task', { method: 'POST', body: JSON.stringify({ taskId }) }),
+  pushTaskFile:     (body)   => request('/ai/push-task-file',      { method: 'POST', body: JSON.stringify(body) }),
+
   // AI — all use SSE streaming so the connection stays alive during long generations
   suggestTimeline:   (body) => streamRequest('/ai/suggest-timeline',   { method: 'POST', body: JSON.stringify(body) }),
   enhanceTask:       (body) => streamRequest('/ai/enhance-task',       { method: 'POST', body: JSON.stringify(body) }),

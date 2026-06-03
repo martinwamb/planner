@@ -25,7 +25,7 @@ const QUADRANTS = [
   { key: 'quadrant_avoid',     label: 'Avoid',       sub: 'Hard + Low Value',    color: 'bg-rose-50 border-rose-200',       badge: 'bg-rose-100 text-rose-700',       dot: 'bg-rose-400'   },
 ];
 
-export default function TaskModal({ task, projectId, onSave, onClose }) {
+export default function TaskModal({ task, projectId, githubRepo, onSave, onClose }) {
   const [form, setForm]               = useState(EMPTY);
   const [saving, setSaving]           = useState(false);
   const [enhancing, setEnhancing]     = useState(false);
@@ -33,6 +33,13 @@ export default function TaskModal({ task, projectId, onSave, onClose }) {
   const [dateReason, setDateReason]   = useState('');
   const [newCheck, setNewCheck]       = useState('');
   const [tab, setTab]                 = useState('summary'); // 'summary' | 'notes'
+
+  // Code generation state
+  const [codeState, setCodeState]     = useState('idle'); // idle | generating | preview | pushing | done
+  const [generatedCode, setGeneratedCode] = useState('');
+  const [codeFilename, setCodeFilename]   = useState('');
+  const [codeNotes, setCodeNotes]         = useState('');
+  const [prUrl, setPrUrl]                 = useState('');
 
   useEffect(() => {
     if (task) {
@@ -116,6 +123,45 @@ export default function TaskModal({ task, projectId, onSave, onClose }) {
     if (!form.title.trim()) return;
     setSaving(true);
     try { await onSave(form); } finally { setSaving(false); }
+  }
+
+  async function handleGenerateCode() {
+    if (!task?.id) return;
+    setCodeState('generating');
+    setGeneratedCode('');
+    setCodeFilename('');
+    setCodeNotes('');
+    try {
+      const result = await api.generateTaskCode(task.id);
+      const raw = result?.raw || '';
+      // Parse FILE: and NOTES: markers from the end of the response
+      const fileMatch = raw.match(/FILE:\s*(.+?)(?:\n|$)/i);
+      const notesMatch = raw.match(/NOTES?:\s*([\s\S]+?)$/i);
+      const code = raw
+        .replace(/FILE:\s*.+?(?:\n|$)/i, '')
+        .replace(/NOTES?:\s*[\s\S]+?$/i, '')
+        .trim();
+      setGeneratedCode(code);
+      setCodeFilename(fileMatch?.[1]?.trim() || 'generated-code.js');
+      setCodeNotes(notesMatch?.[1]?.trim() || '');
+      setCodeState('preview');
+    } catch (err) {
+      alert(err.message || 'Code generation failed');
+      setCodeState('idle');
+    }
+  }
+
+  async function handlePushCode() {
+    if (!task?.id || !generatedCode || !codeFilename) return;
+    setCodeState('pushing');
+    try {
+      const result = await api.pushTaskFile({ taskId: task.id, filename: codeFilename, content: generatedCode });
+      setPrUrl(result.prUrl);
+      setCodeState('done');
+    } catch (err) {
+      alert(err.message || 'Push failed');
+      setCodeState('preview');
+    }
   }
 
   const checkDone  = form.checklist.filter(c => c.checked).length;
@@ -290,6 +336,88 @@ export default function TaskModal({ task, projectId, onSave, onClose }) {
                   className="text-xs text-gray-500 hover:text-gray-900 px-2 py-1 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">+ Add</button>
               </div>
             </div>
+
+            {/* Code generation — only for tasks in GitHub-linked projects */}
+            {githubRepo && task?.id && (
+              <div className="border border-gray-100 rounded-xl p-4 space-y-3 bg-gray-50">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Generate Code</span>
+                  <span className="text-xs text-gray-400">· {githubRepo}</span>
+                </div>
+
+                {codeState === 'idle' && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-gray-500">
+                      qwen2.5 will write code for this task based on its title and checklist, then open a PR on GitHub.
+                    </p>
+                    <button type="button" onClick={handleGenerateCode}
+                      className="flex items-center gap-2 text-sm font-medium text-indigo-600 hover:text-indigo-800 px-3 py-2 rounded-lg hover:bg-indigo-50 border border-indigo-100 transition-colors">
+                      ✦ Generate Code
+                    </button>
+                  </div>
+                )}
+
+                {codeState === 'generating' && (
+                  <div className="flex items-center gap-2 text-sm text-gray-500">
+                    <span className="inline-block w-4 h-4 border-2 border-indigo-300 border-t-indigo-600 rounded-full animate-spin" />
+                    Generating… this takes 1-3 minutes
+                  </div>
+                )}
+
+                {(codeState === 'preview' || codeState === 'pushing') && (
+                  <div className="space-y-3">
+                    {codeNotes && (
+                      <p className="text-xs text-gray-600 bg-white rounded-lg p-2.5 border border-gray-200">{codeNotes}</p>
+                    )}
+                    <div className="space-y-1">
+                      <label className="text-xs text-gray-500 font-medium">Filename</label>
+                      <input
+                        type="text" value={codeFilename}
+                        onChange={e => setCodeFilename(e.target.value)}
+                        className="w-full text-xs font-mono border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-gray-500 font-medium">Generated code</label>
+                      <textarea
+                        value={generatedCode}
+                        onChange={e => setGeneratedCode(e.target.value)}
+                        rows={12}
+                        className="w-full text-xs font-mono border border-gray-200 rounded-lg px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-300 resize-y bg-white"
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <button type="button" onClick={handlePushCode} disabled={codeState === 'pushing'}
+                        className="flex-1 bg-gray-900 text-white text-sm font-medium py-2 rounded-xl hover:bg-gray-700 transition-colors disabled:opacity-50">
+                        {codeState === 'pushing' ? 'Opening PR…' : 'Push to GitHub & Open PR'}
+                      </button>
+                      <button type="button" onClick={() => navigator.clipboard?.writeText(generatedCode)}
+                        className="px-3 py-2 text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded-xl hover:bg-white transition-colors">
+                        Copy
+                      </button>
+                      <button type="button" onClick={() => setCodeState('idle')}
+                        className="px-3 py-2 text-xs text-gray-400 hover:text-gray-600 transition-colors">
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {codeState === 'done' && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-emerald-600 font-medium">✓ PR opened — task moved to Review</p>
+                    <a href={prUrl} target="_blank" rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-800 underline">
+                      View PR on GitHub →
+                    </a>
+                    <button type="button" onClick={() => setCodeState('idle')}
+                      className="block text-xs text-gray-400 hover:text-gray-600 mt-1">
+                      Generate again
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Actions */}
             <div className="flex gap-3 pt-1">

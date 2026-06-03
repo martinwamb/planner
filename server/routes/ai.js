@@ -5,6 +5,8 @@ const { chat } = require('../ollama');
 const { sendMail } = require('../email');
 const { generateAndCacheDailyPlan, formatDailyEmailHtml } = require('../planHelper');
 const { buildPrompt, getProjectContextByProjectId } = require('../enhancer');
+const { getDecryptedPat, ghPut, ghPost, ghGet: githubGet } = require('../github');
+const { log: logActivity } = require('../activityLog');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -348,6 +350,154 @@ Include exactly 5 days. Use 1-2 blocks per day maximum.`;
   } catch (err) {
     console.error('Week plan error:', err);
     sseError(res, stopPing, 'AI unavailable');
+  }
+});
+
+// ─── POST /api/ai/code-for-task ──────────────────────────────────────────────
+// SSE — streams qwen-generated code for a task based on its title, checklist,
+// and recent commit history. No model switch, no repo clone.
+router.post('/code-for-task', async (req, res) => {
+  const { taskId } = req.body;
+  if (!taskId) return res.status(400).json({ error: 'taskId required' });
+
+  const task = db.prepare(`
+    SELECT t.*, p.name as project_name, p.github_repo, p.description as project_description
+    FROM tasks t
+    JOIN projects p ON p.id = t.project_id
+    WHERE t.id = ? AND p.user_id = ?
+  `).get(taskId, req.user.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (!task.github_repo) return res.status(400).json({ error: 'This task\'s project is not linked to a GitHub repo' });
+
+  const checklist = db.prepare('SELECT text, checked FROM checklist_items WHERE task_id = ? ORDER BY position').all(taskId);
+  const recentCommits = db.prepare(
+    'SELECT message, author FROM github_commits WHERE project_id = ? ORDER BY committed_at DESC LIMIT 10'
+  ).all(task.project_id);
+
+  const checklistText = checklist.length
+    ? checklist.map(c => `${c.checked ? '✓' : '○'} ${c.text}`).join('\n')
+    : '(no checklist items)';
+
+  const commitsText = recentCommits.length
+    ? recentCommits.map(c => `- ${c.author}: "${c.message}"`).join('\n')
+    : '(no commit history yet)';
+
+  const prompt = `You are an expert software developer working on the "${task.project_name}" project (GitHub: ${task.github_repo}).
+
+TASK TO IMPLEMENT: ${task.title}
+${task.problem_statement ? `GOAL: ${task.problem_statement}` : ''}
+
+CHECKLIST (steps needed):
+${checklistText}
+
+RECENT COMMITS (for code style context):
+${commitsText}
+
+Write COMPLETE, RUNNABLE code to implement this task. Follow the patterns suggested by the commit history.
+Keep it focused and practical.
+
+After your code, on new lines write exactly:
+FILE: <suggested relative file path e.g. src/components/Login.jsx>
+NOTES: <2 sentences explaining what you implemented and how to use it>`;
+
+  const stopPing = openSSE(res);
+  try {
+    const raw = await chat(prompt, { json: false });
+    sseJSON(res, stopPing, { raw });
+  } catch (err) {
+    console.error('[ai] code-for-task error:', err.message);
+    sseError(res, stopPing, 'AI unavailable — make sure Ollama is running.');
+  }
+});
+
+// ─── POST /api/ai/push-task-file ─────────────────────────────────────────────
+// Pushes a generated file directly to GitHub via the Contents API (no git clone),
+// creates a feature branch, and opens a PR.
+router.post('/push-task-file', async (req, res) => {
+  const { taskId, filename, content } = req.body;
+  if (!taskId || !filename?.trim() || !content?.trim()) {
+    return res.status(400).json({ error: 'taskId, filename, and content are required' });
+  }
+
+  const task = db.prepare(`
+    SELECT t.*, p.github_repo, p.name as project_name
+    FROM tasks t JOIN projects p ON p.id = t.project_id
+    WHERE t.id = ? AND p.user_id = ?
+  `).get(taskId, req.user.id);
+  if (!task) return res.status(404).json({ error: 'Task not found' });
+  if (!task.github_repo) return res.status(400).json({ error: 'Project not linked to GitHub' });
+
+  let token;
+  try { token = getDecryptedPat(req.user.id); }
+  catch { return res.status(400).json({ error: 'No GitHub PAT configured' }); }
+
+  const [owner, repo] = task.github_repo.split('/');
+  const branchName = `feature/task-${taskId}-${task.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 30)}`;
+  const cleanFilename = filename.trim().replace(/^\/+/, '');
+
+  try {
+    // Step 1: Get default branch SHA (to create the feature branch from)
+    const repoInfo = await githubGet(`/repos/${owner}/${repo}`, token);
+    const defaultBranch = repoInfo.default_branch || 'main';
+
+    let baseSha;
+    try {
+      const branchInfo = await githubGet(`/repos/${owner}/${repo}/git/refs/heads/${defaultBranch}`, token);
+      baseSha = branchInfo.object?.sha;
+    } catch {
+      baseSha = null;
+    }
+
+    // Step 2: Create the feature branch (ignore error if it already exists)
+    if (baseSha) {
+      try {
+        await ghPost(`/repos/${owner}/${repo}/git/refs`, token, {
+          ref: `refs/heads/${branchName}`,
+          sha: baseSha,
+        });
+      } catch { /* branch already exists — that's fine */ }
+    }
+
+    // Step 3: Check if file already exists on the branch (need its SHA to update)
+    let existingSha;
+    try {
+      const existing = await githubGet(`/repos/${owner}/${repo}/contents/${cleanFilename}?ref=${branchName}`, token);
+      existingSha = existing.sha;
+    } catch { existingSha = null; }
+
+    // Step 4: Create or update the file on the feature branch
+    const filePayload = {
+      message: `feat: ${task.title}`,
+      content: Buffer.from(content, 'utf8').toString('base64'),
+      branch: branchName,
+    };
+    if (existingSha) filePayload.sha = existingSha;
+
+    await ghPut(`/repos/${owner}/${repo}/contents/${cleanFilename}`, token, filePayload);
+
+    // Step 5: Open a PR (ignore error if PR already open)
+    let prUrl = `https://github.com/${task.github_repo}/compare/${branchName}`;
+    try {
+      const pr = await ghPost(`/repos/${owner}/${repo}/pulls`, token, {
+        title: task.title,
+        head: branchName,
+        base: defaultBranch,
+        body: `## ${task.title}\n\nGenerated by qwen2.5 via Planner.\n\nFile: \`${cleanFilename}\``,
+      });
+      prUrl = pr.html_url;
+    } catch { /* PR already exists or branch not ahead — use compare link */ }
+
+    // Step 6: Update task status to review
+    db.prepare("UPDATE tasks SET status = 'review', updated_at = datetime('now') WHERE id = ?").run(taskId);
+
+    logActivity(req.user.id, task.project_id,
+      `Code generated for "${task.title}". Pushed to branch ${branchName}.`
+    );
+
+    res.json({ ok: true, prUrl, branch: branchName, filename: cleanFilename });
+  } catch (err) {
+    console.error('[ai] push-task-file error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
