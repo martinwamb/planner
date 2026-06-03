@@ -182,6 +182,8 @@ function scheduleGitHubSync() {
       `).all();
       for (const p of projects) {
         await syncProject(p, p.user_id);
+        // Brief pause between projects so Ollama isn't monopolized
+        await new Promise(r => setTimeout(r, 3000));
       }
       console.log(`[cron] GitHub sync complete (${projects.length} project(s))`);
     } catch (err) {

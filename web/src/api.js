@@ -7,6 +7,13 @@ async function request(path, options = {}) {
     ...options,
   });
   if (res.status === 204) return null;
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw Object.assign(
+      new Error(`Server error (${res.status}) — please try again in a moment`),
+      { status: res.status }
+    );
+  }
   const data = await res.json();
   if (!res.ok) throw Object.assign(new Error(data.error || 'Request failed'), { status: res.status });
   return data;
@@ -114,7 +121,9 @@ export const api = {
   linkGitHubRepo:    (pid, repo) => request(`/github/projects/${pid}/link`,  { method: 'POST',   body: JSON.stringify({ repo }) }),
   syncGitHubProject:   (pid) => request(`/github/projects/${pid}/sync`,  { method: 'POST' }),
   getProjectCommits:   (pid) => request(`/github/projects/${pid}/commits`),
-  scanAndImportRepos:  ()    => request('/github/scan-and-import', { method: 'POST' }),
+  scanAndImportRepos:      ()    => request('/github/scan-and-import', { method: 'POST' }),
+  deleteUnlinkedProjects:  ()    => request('/github/unlinked-projects', { method: 'DELETE' }),
+  getActivityLog:          ()    => request('/github/activity'),
 
   // AI — all use SSE streaming so the connection stays alive during long generations
   suggestTimeline:   (body) => streamRequest('/ai/suggest-timeline',   { method: 'POST', body: JSON.stringify(body) }),

@@ -3,6 +3,7 @@ const db = require('../db');
 const { requireAuth } = require('../auth');
 const { encrypt } = require('../crypto');
 const { listUserRepos, syncProject, scanAndImportRepos } = require('../github');
+const { getRecent: getRecentActivity } = require('../activityLog');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -110,6 +111,20 @@ router.post('/scan-and-import', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// DELETE /api/github/unlinked-projects — remove all projects with no github_repo
+router.delete('/unlinked-projects', (req, res) => {
+  const result = db.prepare(
+    `DELETE FROM projects WHERE user_id = ? AND (github_repo IS NULL OR github_repo = '')`
+  ).run(req.user.id);
+  res.json({ ok: true, deleted: result.changes });
+});
+
+// GET /api/github/activity — return recent plain-English activity log
+router.get('/activity', (req, res) => {
+  const entries = getRecentActivity(req.user.id, 100);
+  res.json(entries);
 });
 
 module.exports = router;

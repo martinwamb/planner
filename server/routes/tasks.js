@@ -5,6 +5,7 @@ const { enhanceTask } = require('../enhancer');
 const rewards = require('../rewards');
 
 const { recalcTaskStatus, recalcProjectProgress } = require('../taskHelpers');
+const { log: logActivity } = require('../activityLog');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -197,7 +198,13 @@ router.patch('/tasks/:id/status', (req, res) => {
   const wasNotDone = task.status !== 'done';
   db.prepare("UPDATE tasks SET status = ?, updated_at = datetime('now') WHERE id = ?").run(status, req.params.id);
   // Award points when a task is moved to done for the first time
-  if (status === 'done' && wasNotDone) rewards.onTaskDone(req.user.id, task.id);
+  if (status === 'done' && wasNotDone) {
+    rewards.onTaskDone(req.user.id, task.id);
+    const project = db.prepare('SELECT name FROM projects WHERE id = ?').get(task.project_id);
+    logActivity(req.user.id, task.project_id,
+      `You completed "${task.title}"${project ? ` in ${project.name}` : ''}.`
+    );
+  }
   res.json({ ok: true });
 });
 

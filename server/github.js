@@ -3,8 +3,21 @@ const db = require('./db');
 const { chat } = require('./ollama');
 const { decrypt } = require('./crypto');
 const { recalcProjectProgress } = require('./taskHelpers');
+const { log: logActivity } = require('./activityLog');
 
 const GH_API = 'api.github.com';
+const OLLAMA_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes — don't hog Ollama
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function chatWithTimeout(prompt, opts = {}) {
+  return Promise.race([
+    chat(prompt, opts),
+    new Promise((_, rej) =>
+      setTimeout(() => rej(new Error('Ollama busy — using fallback')), OLLAMA_TIMEOUT_MS)
+    ),
+  ]);
+}
 
 function ghGet(path, token) {
   return new Promise((resolve, reject) => {
@@ -95,6 +108,21 @@ async function fetchRecentCommits(userId, ownerRepo, since) {
   return detailed;
 }
 
+// Build fallback tasks from raw commit messages when Ollama is unavailable
+function buildFallbackTasks(commits) {
+  const seen = new Set();
+  const tasks = [];
+  for (const c of commits.slice(0, 20)) {
+    const title = c.message.split(/[\n:]/)[0].trim();
+    if (title.length > 5 && title.length < 80 && !seen.has(title.toLowerCase())) {
+      seen.add(title.toLowerCase());
+      tasks.push({ title, status: 'todo' });
+    }
+    if (tasks.length >= 8) break;
+  }
+  return tasks;
+}
+
 async function matchCommitsToTasks(projectId) {
   const commits = db.prepare(`
     SELECT id, sha, message, author, committed_at, files_json
@@ -117,6 +145,8 @@ async function matchCommitsToTasks(projectId) {
     return;
   }
 
+  const project = db.prepare('SELECT id, name, github_repo, user_id FROM projects WHERE id = ?').get(projectId);
+
   const commitList = commits.map((c, i) => {
     const files = JSON.parse(c.files_json || '[]').slice(0, 10).join(', ');
     return `Commit ${i + 1}: SHA=${c.sha.slice(0, 7)} | Author: ${c.author} | Message: "${c.message}"${files ? ` | Files: ${files}` : ''}`;
@@ -137,8 +167,8 @@ ${commitList}
 Rules:
 - Only match when the commit message or filenames clearly relate to a task title or checklist item.
 - Status meanings: "in-progress" = work started but not finished; "review" = looks complete (keywords: fix, implement, add, complete, finish, done, close, resolve); "done" = explicitly done AND file changes match the task.
-- Only advance status (never go backward). If a task is already "in-progress", only move it to "review" or "done".
-- If uncertain, do NOT match. Under-matching is better than over-matching.
+- Only advance status (never go backward).
+- If uncertain, do NOT match.
 
 Respond ONLY with valid JSON:
 {"matches":[{"commit_sha":"<first 7 chars>","task_id":<number>,"new_status":"<in-progress|review|done>","reason":"<brief reason>"}]}
@@ -146,14 +176,14 @@ If no matches: {"matches":[]}`;
 
   let parsed = { matches: [] };
   try {
-    const raw = await chat(prompt, { json: true });
+    const raw = await chatWithTimeout(prompt, { json: true });
     try { parsed = JSON.parse(raw); }
     catch {
       const m = raw.match(/\{[\s\S]*\}/);
       if (m) parsed = JSON.parse(m[0]);
     }
   } catch (err) {
-    console.error(`[github] Ollama matching failed for project ${projectId}:`, err.message);
+    console.error(`[github] Ollama matching skipped for project ${projectId}:`, err.message);
   }
 
   const STATUS_ORDER = { 'todo': 0, 'in-progress': 1, 'review': 2, 'done': 3 };
@@ -171,6 +201,12 @@ If no matches: {"matches":[]}`;
     if ((STATUS_ORDER[match.new_status] ?? -1) <= (STATUS_ORDER[task.status] ?? 0)) continue;
     updateTask.run(match.new_status, match.task_id, projectId);
     updateCommit.run(match.reason || '', projectId, `${match.commit_sha}%`);
+    const authorCommit = commits.find(c => c.sha.startsWith(match.commit_sha));
+    const author = authorCommit?.author || 'Someone';
+    const statusLabel = match.new_status === 'done' ? 'completed' : match.new_status === 'review' ? 'ready for review' : 'in progress';
+    logActivity(project.user_id, projectId,
+      `${author} pushed code to ${project.github_repo}. "${task.title}" is now ${statusLabel}.`
+    );
     console.log(`[github] Task ${match.task_id} "${task.title}" → ${match.new_status} (${match.commit_sha})`);
   }
 
@@ -192,6 +228,9 @@ async function syncProject(project, userId) {
         insert.run(project.id, c.sha, c.message, c.author, c.committed_at, JSON.stringify(c.files));
       }
       console.log(`[github] Stored ${commits.length} new commits for project ${project.id}`);
+      logActivity(userId, project.id,
+        `Checked ${project.github_repo} — ${commits.length} new commit${commits.length !== 1 ? 's' : ''} found.`
+      );
     }
     db.prepare(`UPDATE projects SET github_last_synced_at = datetime('now') WHERE id = ?`).run(project.id);
     await matchCommitsToTasks(project.id);
@@ -239,13 +278,20 @@ Respond ONLY with valid JSON:
 {"tasks":[{"title":"<task title>","status":"<todo|in-progress|done>"}]}`;
 
   let parsed = { tasks: [] };
+  let usedFallback = false;
   try {
-    const raw = await chat(prompt, { json: true });
+    const raw = await chatWithTimeout(prompt, { json: true });
     try { parsed = JSON.parse(raw); }
     catch { const m = raw.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); }
   } catch (err) {
-    console.error(`[github] Bootstrap task generation failed for project ${projectId}:`, err.message);
-    return;
+    console.error(`[github] Bootstrap AI failed for project ${projectId} (${err.message}) — using fallback tasks`);
+    usedFallback = true;
+  }
+
+  // If AI returned nothing or failed, fall back to raw commit messages as tasks
+  if (!parsed.tasks?.length) {
+    parsed.tasks = buildFallbackTasks(commits);
+    usedFallback = true;
   }
 
   const insert = db.prepare(`
@@ -253,11 +299,20 @@ Respond ONLY with valid JSON:
     VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
   `);
   const validStatuses = new Set(['todo', 'in-progress', 'review', 'done']);
+  let inserted = 0;
   (parsed.tasks || []).forEach((t, i) => {
     if (!t.title?.trim()) return;
     insert.run(projectId, t.title.trim(), validStatuses.has(t.status) ? t.status : 'todo', i);
+    inserted++;
   });
-  console.log(`[github] Bootstrapped ${parsed.tasks?.length || 0} tasks for project ${projectId} (${project.github_repo})`);
+
+  if (inserted > 0) {
+    const source = usedFallback ? 'recent commits' : 'commit history analysis';
+    logActivity(userId, projectId,
+      `Set up ${inserted} task${inserted !== 1 ? 's' : ''} for "${project.name}" based on ${source}.`
+    );
+  }
+  console.log(`[github] Bootstrapped ${inserted} tasks for project ${projectId} (${project.github_repo})${usedFallback ? ' [fallback]' : ''}`);
 }
 
 async function scanAndImportRepos(userId) {
@@ -269,7 +324,6 @@ async function scanAndImportRepos(userId) {
   ).get(userId);
 
   const results = { created: 0, linked: 0, skipped: 0, tasks_created: 0 };
-
   const normalize = s => s.toLowerCase().replace(/[-_.]/g, ' ').replace(/\s+/g, ' ').trim();
 
   for (const repo of repos) {
@@ -285,6 +339,9 @@ async function scanAndImportRepos(userId) {
           .run(repo.full_name, match.id);
         results.linked++;
         match.github_repo = repo.full_name;
+        logActivity(userId, match.id,
+          `Linked project "${match.name}" to your GitHub repo ${repo.full_name}.`
+        );
       } else {
         results.skipped++;
       }
@@ -300,15 +357,25 @@ async function scanAndImportRepos(userId) {
       project = db.prepare('SELECT * FROM projects WHERE id = ?').get(result.lastInsertRowid);
       userProjects.push(project);
       results.created++;
+      logActivity(userId, project.id,
+        `Created project "${prettyName}" from your GitHub repo ${repo.full_name}.`
+      );
     }
 
     const tasksBefore = db.prepare('SELECT COUNT(*) as c FROM tasks WHERE project_id = ?').get(project.id).c;
     await bootstrapTasksFromCommits(project.id, userId);
     const tasksAfter = db.prepare('SELECT COUNT(*) as c FROM tasks WHERE project_id = ?').get(project.id).c;
     results.tasks_created += (tasksAfter - tasksBefore);
+
+    // Breathe between repos — don't hammer Ollama
+    await sleep(5000);
   }
 
   return results;
 }
 
-module.exports = { listUserRepos, syncProject, fetchRecentCommits, matchCommitsToTasks, getDecryptedPat, bootstrapTasksFromCommits, scanAndImportRepos };
+module.exports = {
+  listUserRepos, syncProject, fetchRecentCommits,
+  matchCommitsToTasks, getDecryptedPat,
+  bootstrapTasksFromCommits, scanAndImportRepos,
+};

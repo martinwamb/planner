@@ -7,6 +7,7 @@ import ProjectModal from '../components/ProjectModal';
 import TagManager from '../components/TagManager';
 import CalendarView from '../components/CalendarView';
 import GitHubSettings from '../components/GitHubSettings';
+import ActivityLog from '../components/ActivityLog';
 import { STATUSES } from '../constants';
 
 const FILTER_OPTIONS = [{ value: 'all', label: 'All' }, ...STATUSES];
@@ -285,7 +286,7 @@ export default function Dashboard() {
             </div>
             {/* View tabs */}
             <div className="flex gap-0 flex-shrink-0">
-              {[['projects', 'Projects'], ['calendar', 'Calendar']].map(([v, label]) => (
+              {[['projects', 'Projects'], ['calendar', 'Calendar'], ['activity', 'Activity']].map(([v, label]) => (
                 <button key={v} onClick={() => setView(v)}
                   className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-all ${
                     view === v ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-400 hover:text-gray-600'
@@ -491,12 +492,36 @@ export default function Dashboard() {
             className="text-xs text-gray-400 hover:text-gray-600 px-2 py-1.5 rounded-lg hover:bg-white transition-colors border border-dashed border-gray-200">
             + Manage Tags
           </button>
+
+          {/* Clear projects not linked to GitHub */}
+          {projects.some(p => !p.github_repo) && (
+            <button
+              onClick={async () => {
+                const count = projects.filter(p => !p.github_repo).length;
+                if (!window.confirm(`Remove ${count} project${count !== 1 ? 's' : ''} that are not linked to any GitHub repo? This cannot be undone.`)) return;
+                try {
+                  const r = await api.deleteUnlinkedProjects();
+                  const p = await api.getProjects(activeWs?.id);
+                  setProjects(p);
+                  setImportResult({ created: 0, linked: 0, skipped: 0, tasks_created: 0, _deleted: r.deleted });
+                } catch (err) {
+                  alert(err.message);
+                }
+              }}
+              className="text-xs text-rose-400 hover:text-rose-600 px-2 py-1.5 rounded-lg hover:bg-rose-50 transition-colors border border-dashed border-rose-200 ml-auto">
+              ✕ Clear non-GitHub projects
+            </button>
+          )}
         </div>
         )}
 
         {/* Calendar view */}
         {view === 'calendar' && (
           <CalendarView projects={projects} />
+        )}
+
+        {view === 'activity' && (
+          <ActivityLog />
         )}
 
         {/* Projects grid */}
@@ -546,6 +571,13 @@ export default function Dashboard() {
               <div className="flex-1 min-w-0">
                 {importResult.error ? (
                   <p>{importResult.error}</p>
+                ) : importResult._deleted != null ? (
+                  <>
+                    <p className="font-semibold">Projects cleared</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {importResult._deleted} project{importResult._deleted !== 1 ? 's' : ''} without a GitHub repo removed.
+                    </p>
+                  </>
                 ) : (
                   <>
                     <p className="font-semibold">GitHub import complete</p>
