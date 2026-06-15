@@ -164,11 +164,12 @@ async function generateAndCacheDailyPlan(userId, date) {
   const projectList = projectsWithTasks.map(p =>
     `Project: "${p.name}" (deadline: ${p.deadline || 'none'}, color: ${p.color})\n` +
     p.tasks.map(t => {
-      const due     = t.due_date ? ` | due ${t.due_date}` : ' | no due date';
-      const urgTag  = t.due_date && t.due_date < date  ? ' ⚠ OVERDUE' :
-                      t.due_date && t.due_date <= urgentDate ? ' ⚡ DUE SOON' : '';
-      const items   = t.pending.length ? `\n    → ${t.pending.slice(0, 3).join('\n    → ')}` : '';
-      return `  "${t.title}" [${t.status}${due}${urgTag}]${items}`;
+      const due        = t.due_date ? ` | due ${t.due_date}` : ' | no due date';
+      const reviewTag  = t.status === 'review' ? ' 📋 AWAITING REVIEW' : '';
+      const urgTag     = t.due_date && t.due_date < date  ? ' ⚠ OVERDUE' :
+                         t.due_date && t.due_date <= urgentDate ? ' ⚡ DUE SOON' : '';
+      const items      = t.pending.length ? `\n    → ${t.pending.slice(0, 3).join('\n    → ')}` : '';
+      return `  "${t.title}" [${t.status}${due}${reviewTag}${urgTag}]${items}`;
     }).join('\n')
   ).join('\n\n');
 
@@ -177,17 +178,22 @@ async function generateAndCacheDailyPlan(userId, date) {
 ${projectList}
 
 Prioritise in this order:
-1. ⚠ OVERDUE tasks — must appear
-2. ⚡ DUE SOON tasks — should appear
-3. Nearest due dates next
-4. Spread across at least 2 different projects
+1. 📋 AWAITING REVIEW — code changes that need review; must appear first if any exist
+2. ⚠ OVERDUE tasks — must appear
+3. ⚡ DUE SOON tasks — should appear
+4. Nearest due dates next
+5. Spread across at least 2 different projects
 
-IMPORTANT: The "task" field must be copied EXACTLY (character for character) from the quoted title in the list above — e.g. "Mobile App creation", not a checklist item beneath it.
-The "items" field should contain one checklist item from the → lines beneath that task.
+RULES (do not break these):
+- The "task" field must be copied EXACTLY (character for character) from a quoted title in the list above.
+- The "items" field must contain one → checklist item from beneath that specific task.
+- Do NOT invent meetings, stakeholder reviews, calls, or any event not explicitly listed above.
+- The "summary" field must describe what code changes or tasks are pending review today — no generic encouragement.
+- The "reason" field must explain why this task needs attention based on its status or due date shown above.
 
 Respond ONLY with valid JSON, no markdown:
 {
-  "summary": "one encouraging sentence about today's focus",
+  "summary": "one sentence describing what is pending review or needs action today",
   "blocks": [
     {
       "label": "Top Priority",
@@ -195,7 +201,7 @@ Respond ONLY with valid JSON, no markdown:
       "color": "exact hex color",
       "task": "EXACT task title from the quoted titles above",
       "items": ["one → checklist item from beneath that task"],
-      "reason": "one sentence: why this task today"
+      "reason": "one sentence: why this task needs attention today, based on its status or due date"
     }
   ]
 }

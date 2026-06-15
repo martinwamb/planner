@@ -169,28 +169,32 @@ function scheduleDailyPlanEmail() {
 }
 
 // ─── GitHub sync ──────────────────────────────────────────────────────────────
+// Runs every 5 minutes but only processes the 3 least-recently-synced repos.
+// This keeps a rolling cadence (all 19 repos cycle in ~32 min) without the
+// resource spike of syncing all repos in a single burst every 30 minutes.
 function scheduleGitHubSync() {
   const { syncProject } = require('./github');
-  cron.schedule('*/30 * * * *', async () => {
-    console.log('[cron] Running GitHub sync...');
+  cron.schedule('*/5 * * * *', async () => {
     try {
-      const projects = db.prepare(`
+      const batch = db.prepare(`
         SELECT p.*, u.github_pat_enc
         FROM projects p
         JOIN users u ON u.id = p.user_id
         WHERE p.github_repo IS NOT NULL AND u.github_pat_enc IS NOT NULL
+        ORDER BY p.github_last_synced_at ASC NULLS FIRST
+        LIMIT 3
       `).all();
-      for (const p of projects) {
+      if (!batch.length) return;
+      console.log(`[cron] GitHub sync: ${batch.map(p => p.github_repo).join(', ')}`);
+      for (const p of batch) {
         await syncProject(p, p.user_id);
-        // Brief pause between projects so Ollama isn't monopolized
-        await new Promise(r => setTimeout(r, 3000));
+        await new Promise(r => setTimeout(r, 5000));
       }
-      console.log(`[cron] GitHub sync complete (${projects.length} project(s))`);
     } catch (err) {
       console.error('[cron] GitHub sync failed:', err.message);
     }
   });
-  console.log('[cron] GitHub sync scheduled every 30 minutes');
+  console.log('[cron] GitHub sync scheduled: 3 repos every 5 minutes (rolling)');
 }
 
 // ─── Auto code generation ─────────────────────────────────────────────────────
