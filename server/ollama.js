@@ -2,7 +2,7 @@ const http = require('http');
 const url = require('url');
 
 const BASE  = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
-const MODEL = process.env.OLLAMA_MODEL    || 'llama3:8b';
+const MODEL = process.env.OLLAMA_MODEL    || 'qwen3:14b';
 
 // Inactivity timeout — with streaming, tokens arrive continuously so
 // this only fires if Ollama goes completely silent for 10 minutes.
@@ -15,6 +15,7 @@ function chat(prompt, { model = MODEL, json = false } = {}) {
       prompt,
       stream: true,            // Stream tokens so the socket stays alive
       format: json ? 'json' : undefined,
+      think: false,
     });
 
     const parsed = url.parse(`${BASE}/api/generate`);
