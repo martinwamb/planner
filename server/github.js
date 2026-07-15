@@ -1,6 +1,6 @@
 const https = require('https');
 const db = require('./db');
-const { chat } = require('./ollama');
+const { chat, isReachable } = require('./ollama');
 const { decrypt } = require('./crypto');
 const { recalcProjectProgress } = require('./taskHelpers');
 const { log: logActivity } = require('./activityLog');
@@ -209,6 +209,11 @@ async function matchCommitsToTasks(projectId) {
     return;
   }
 
+  if (!(await isReachable())) {
+    console.log(`[github] Ollama unavailable — deferring ${commits.length} commit(s) for project ${projectId}`);
+    return; // leave processed=0 so the next sync (once Ollama is back up) retries these
+  }
+
   const project = db.prepare('SELECT id, name, github_repo, user_id FROM projects WHERE id = ?').get(projectId);
 
   const commitList = commits.map((c, i) => {
@@ -239,6 +244,7 @@ Respond ONLY with valid JSON:
 If no matches: {"matches":[]}`;
 
   let parsed = { matches: [] };
+  let ollamaFailed = false;
   try {
     const raw = await chatWithTimeout(prompt, { json: true });
     try { parsed = JSON.parse(raw); }
@@ -248,6 +254,7 @@ If no matches: {"matches":[]}`;
     }
   } catch (err) {
     console.error(`[github] Ollama matching skipped for project ${projectId}:`, err.message);
+    ollamaFailed = true;
   }
 
   const STATUS_ORDER = { 'todo': 0, 'in-progress': 1, 'review': 2, 'done': 3 };
@@ -272,6 +279,11 @@ If no matches: {"matches":[]}`;
       `${author} pushed code to ${project.github_repo}. "${task.title}" is now ${statusLabel}.`
     );
     console.log(`[github] Task ${match.task_id} "${task.title}" → ${match.new_status} (${match.commit_sha})`);
+  }
+
+  if (ollamaFailed) {
+    console.log(`[github] Leaving ${commits.length} commit(s) unprocessed for project ${projectId} — will retry next sync`);
+    return;
   }
 
   db.prepare('UPDATE github_commits SET processed = 1 WHERE project_id = ? AND processed = 0').run(projectId);

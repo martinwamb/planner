@@ -33,7 +33,8 @@ jobs:
             npm install
 
             echo "--- Restarting PM2 process ---"
-            pm2 restart planner || pm2 start index.js --name planner --cwd ~/apps/planner/server
+            cd ~/apps/planner
+            pm2 startOrReload ecosystem.config.js --update-env
             pm2 save
 
             echo "=== Deploy complete ==="

@@ -1,15 +1,20 @@
 const cron = require('node-cron');
 const db = require('./db');
-const { chat } = require('./ollama');
+const { chat, isReachable } = require('./ollama');
 const { sendMail } = require('./email');
 const { enhanceAllUnenhanced, enhanceAllDates } = require('./enhancer');
 const { generateAndCacheDailyPlan, formatDailyEmailHtml } = require('./planHelper');
 
 // ─── Weekly digest ────────────────────────────────────────────────────────────
 function scheduleWeeklyDigest() {
-  // Every Monday at 8:00 AM (server time)
-  cron.schedule('0 8 * * 1', async () => {
+  // Monday 23:00 UTC — inside Ollama's nightly availability window (22:00-06:00
+  // UTC), so the per-user Ollama calls below don't hit a stopped service.
+  cron.schedule('0 23 * * 1', async () => {
     console.log('[cron] Running weekly digest...');
+    if (!(await isReachable())) {
+      console.log('[cron] Weekly digest skipped — Ollama not reachable');
+      return;
+    }
     try {
       const users = db.prepare('SELECT * FROM users').all();
       for (const user of users) {
@@ -55,15 +60,21 @@ Return only the HTML body content.`;
       console.error('[cron] Weekly digest failed:', err);
     }
   });
-  console.log('[cron] Weekly digest scheduled for Mondays at 08:00');
+  console.log('[cron] Weekly digest scheduled for Mondays at 23:00 UTC');
 }
 
 // ─── Daily task enhancement ───────────────────────────────────────────────────
-// Runs every day at 09:00. Enhances any tasks that still lack structure,
-// then tops up checklist items on tasks with fewer than 3 unchecked items.
+// Runs every day at 05:00 UTC (08:00 EAT) — well inside Ollama's nightly window,
+// instead of right at its 06:00 UTC shutdown instant. Enhances any tasks that
+// still lack structure, then tops up checklist items on tasks with fewer than
+// 3 unchecked items.
 function scheduleDailyEnhancement() {
-  cron.schedule('0 9 * * *', async () => {  // 09:00 EAT
+  cron.schedule('0 8 * * *', async () => {  // 08:00 EAT = 05:00 UTC
     console.log('[cron] Running daily enhancement...');
+    if (!(await isReachable())) {
+      console.log('[cron] Daily enhancement skipped — Ollama not reachable');
+      return;
+    }
     try {
       // 1. Enhance any tasks that were never structured
       await enhanceAllUnenhanced();
@@ -138,7 +149,7 @@ Respond ONLY with valid JSON: {"items": ["action one", "action two", "action thr
       console.error('[cron] Daily enhancement failed:', err);
     }
   }, { timezone: 'Africa/Nairobi' });
-  console.log('[cron] Daily enhancement scheduled for 09:00 EAT');
+  console.log('[cron] Daily enhancement scheduled for 08:00 EAT (05:00 UTC)');
 }
 
 // ─── Daily plan email ─────────────────────────────────────────────────────────
@@ -203,6 +214,10 @@ function scheduleCodeGeneration() {
 
   cron.schedule('0 2 * * *', async () => {
     console.log('[cron] Running background code generation...');
+    if (!(await isReachable())) {
+      console.log('[cron] Code generation skipped — Ollama not reachable');
+      return;
+    }
     try {
       // Eligible: github-linked project, not done, no draft yet, meaningful title
       const tasks = db.prepare(`
