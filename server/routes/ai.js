@@ -3,7 +3,7 @@ const db = require('../db');
 const { requireAuth } = require('../auth');
 const { chat } = require('../ollama');
 const { sendMail } = require('../email');
-const { generateAndCacheDailyPlan, formatDailyEmailHtml } = require('../planHelper');
+const { generateAndCacheDailyPlan, sendDailyPlanEmail } = require('../planHelper');
 const { buildPrompt, getProjectContextByProjectId } = require('../enhancer');
 const { getDecryptedPat, ghPut, ghPost, ghGet: githubGet } = require('../github');
 const { log: logActivity } = require('../activityLog');
@@ -194,9 +194,7 @@ router.post('/daily-digest', async (req, res) => {
   });
   const stopPing = openSSE(res);
   try {
-    const plan = await generateAndCacheDailyPlan(req.user.id, today);
-    const html  = formatDailyEmailHtml(plan, dayLabel, req.user.id);
-    await sendMail({ to: user.email, subject: `Your plan for ${dayLabel}`, html });
+    await sendDailyPlanEmail(user, today, dayLabel);
     sseJSON(res, stopPing, { ok: true, sent_to: user.email });
   } catch (err) {
     console.error('Daily digest error:', err);

@@ -143,4 +143,14 @@ async function reviewOneFileForProject(project) {
   }
 }
 
-module.exports = { reviewOneFileForProject, selectFileToReview, parseReviewResponse };
+function getTodaysReviews(userId) {
+  return db.prepare(`
+    SELECT fr.file_path, fr.summary, fr.suggestion, p.name AS project_name, p.github_repo
+    FROM file_reviews fr
+    JOIN projects p ON p.id = fr.project_id
+    WHERE fr.user_id = ? AND fr.status = 'ok' AND date(fr.reviewed_at) = date('now')
+    ORDER BY fr.reviewed_at ASC
+  `).all(userId);
+}
+
+module.exports = { reviewOneFileForProject, selectFileToReview, parseReviewResponse, getTodaysReviews };

@@ -3,7 +3,7 @@ const db = require('./db');
 const { chat, isReachable } = require('./ollama');
 const { sendMail } = require('./email');
 const { enhanceAllUnenhanced, enhanceAllDates } = require('./enhancer');
-const { generateAndCacheDailyPlan, formatDailyEmailHtml } = require('./planHelper');
+const { sendDailyPlanEmail } = require('./planHelper');
 
 // ─── Weekly digest ────────────────────────────────────────────────────────────
 function scheduleWeeklyDigest() {
@@ -166,11 +166,8 @@ function scheduleDailyPlanEmail() {
     });
     for (const user of users) {
       try {
-        const plan = await generateAndCacheDailyPlan(user.id, today);
-        if (!plan.blocks?.length) continue;
-        const html = formatDailyEmailHtml(plan, dayLabel, user.id);
-        await sendMail({ to: user.email, subject: `Your plan for ${dayLabel}`, html });
-        console.log(`[cron] Daily plan email sent to ${user.email}`);
+        const sent = await sendDailyPlanEmail(user, today, dayLabel);
+        if (sent) console.log(`[cron] Daily plan email sent to ${user.email}`);
       } catch (err) {
         console.error(`[cron] Daily plan email failed for ${user.email}:`, err.message);
       }

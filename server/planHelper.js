@@ -1,6 +1,8 @@
 const crypto = require('crypto');
 const db = require('./db');
 const { chat } = require('./ollama');
+const { sendMail } = require('./email');
+const { getTodaysReviews } = require('./fileReview');
 
 function makeSnoozeUrl(userId, taskId, days) {
   const exp    = Math.floor(Date.now() / 1000) + 48 * 3600;
@@ -27,8 +29,20 @@ function labelStyle(label) {
   return 'background:#f9fafb;color:#6b7280;border:1px solid #e5e7eb;';
 }
 
-function formatDailyEmailHtml(plan, dayLabel, userId) {
+function formatDailyEmailHtml(plan, dayLabel, userId, fileReviews = []) {
   const quote = QUOTES[new Date().getDay() % QUOTES.length];
+
+  const reviewCards = fileReviews.map(r => `
+    <div style="margin-bottom:12px;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">
+      <div style="padding:12px 16px;background:#fafafa;border-bottom:1px solid #f0f0f0;">
+        <div style="margin-bottom:6px;color:#6b7280;font-size:12px;">${r.project_name || ''}</div>
+        <p style="margin:0;font-size:13px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#111827;font-weight:600;">${r.file_path}</p>
+      </div>
+      <div style="padding:10px 16px 6px;">
+        <p style="margin:0 0 5px;color:#374151;font-size:13px;font-weight:600;line-height:1.5;">${r.summary || ''}</p>
+        ${r.suggestion ? `<p style="margin:0;color:#9ca3af;font-size:12px;font-style:italic;line-height:1.5;">${r.suggestion}</p>` : ''}
+      </div>
+    </div>`).join('');
 
   const blocks = (plan.blocks || []).map(block => {
     const items = (block.items || []).slice(0, 3);
@@ -85,6 +99,13 @@ function formatDailyEmailHtml(plan, dayLabel, userId) {
             ${blocks || '<p style="color:#9ca3af;font-size:14px;margin:0;">Nothing specific planned for today.</p>'}
           </td>
         </tr>
+        ${reviewCards ? `
+        <tr>
+          <td style="background:#ffffff;padding:4px 28px 24px;border-top:1px solid #f3f4f6;">
+            <p style="margin:14px 0 14px;color:#9ca3af;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;">Code review — ${fileReviews.length} file${fileReviews.length !== 1 ? 's' : ''} reviewed overnight</p>
+            ${reviewCards}
+          </td>
+        </tr>` : ''}
         <tr>
           <td style="background:#f9fafb;padding:14px 28px;border-top:1px solid #e5e7eb;border-radius:0 0 14px 14px;">
             <p style="margin:0;color:#9ca3af;font-size:12px;">Sent by <strong style="color:#6366f1;">Planner</strong></p>
@@ -286,4 +307,16 @@ Use exactly one "Top Priority", one or two "Important", and optionally one "If t
   return parsed;
 }
 
-module.exports = { generateAndCacheDailyPlan, formatDailyEmailHtml };
+// Shared by the cron job and the manual "send now" button so both always stay
+// in sync — building the plan, this morning's file-review results, and the
+// email in exactly one place.
+async function sendDailyPlanEmail(user, date, dayLabel) {
+  const plan = await generateAndCacheDailyPlan(user.id, date);
+  const fileReviews = getTodaysReviews(user.id);
+  if (!plan.blocks?.length && !fileReviews.length) return false;
+  const html = formatDailyEmailHtml(plan, dayLabel, user.id, fileReviews);
+  await sendMail({ to: user.email, subject: `Your plan for ${dayLabel}`, html });
+  return true;
+}
+
+module.exports = { generateAndCacheDailyPlan, formatDailyEmailHtml, sendDailyPlanEmail };
