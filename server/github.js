@@ -312,6 +312,10 @@ async function syncProject(project, userId) {
     await matchCommitsToTasks(project.id);
   } catch (err) {
     console.error(`[github] Sync failed for project ${project.id} (${project.github_repo}):`, err.message);
+    // Bump the timestamp even on failure — otherwise a permanently broken repo
+    // (deleted, renamed, revoked PAT) never rotates out of "least-recently-synced"
+    // and monopolizes every batch forever, starving all other projects.
+    db.prepare(`UPDATE projects SET github_last_synced_at = datetime('now') WHERE id = ?`).run(project.id);
   }
 }
 
