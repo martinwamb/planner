@@ -4,7 +4,7 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
 const db = require('./db');
-const { scheduleWeeklyDigest, scheduleDailyEnhancement, scheduleDailyPlanEmail, scheduleGitHubSync, scheduleCodeGeneration } = require('./cron');
+const { scheduleWeeklyDigest, scheduleDailyEnhancement, scheduleDailyPlanEmail, scheduleGitHubSync, scheduleCodeGeneration, scheduleFileReview } = require('./cron');
 const { enhanceAllUnenhanced, enhanceAllDates } = require('./enhancer');
 const { backfill: rewardsBackfill } = require('./rewards');
 
@@ -60,6 +60,7 @@ scheduleDailyEnhancement();
 scheduleDailyPlanEmail();
 scheduleGitHubSync();
 scheduleCodeGeneration();
+scheduleFileReview();
 
 app.listen(PORT, () => {
   console.log(`Planner server running on port ${PORT}`);

@@ -249,4 +249,40 @@ function scheduleCodeGeneration() {
   console.log('[cron] Background code generation scheduled for 02:00 EAT');
 }
 
-module.exports = { scheduleWeeklyDigest, scheduleDailyEnhancement, scheduleDailyPlanEmail, scheduleGitHubSync, scheduleCodeGeneration };
+// ─── Nightly per-file review ──────────────────────────────────────────────────
+// Runs at 01:00 UTC — between code-gen (23:00 UTC) and daily enhancement
+// (05:00 UTC). Reviews exactly 1 file per GitHub-linked repo, ordered by
+// least-recently-reviewed, so no repo is neglected even if the run doesn't
+// reach every repo before Ollama's window closes at 06:00 UTC.
+function scheduleFileReview() {
+  const { reviewOneFileForProject } = require('./fileReview');
+
+  cron.schedule('0 1 * * *', async () => {
+    console.log('[cron] Running nightly file review...');
+    if (!(await isReachable())) {
+      console.log('[cron] File review skipped — Ollama not reachable');
+      return;
+    }
+    try {
+      const projects = db.prepare(`
+        SELECT p.*, u.github_pat_enc
+        FROM projects p
+        JOIN users u ON u.id = p.user_id
+        WHERE p.github_repo IS NOT NULL AND u.github_pat_enc IS NOT NULL
+        ORDER BY p.github_last_reviewed_at ASC NULLS FIRST
+      `).all();
+
+      console.log(`[cron] File review: ${projects.length} repo(s)`);
+      for (const p of projects) {
+        await reviewOneFileForProject(p);
+        await new Promise(r => setTimeout(r, 8000));
+      }
+      console.log('[cron] Nightly file review complete');
+    } catch (err) {
+      console.error('[cron] File review cron error:', err.message);
+    }
+  });
+  console.log('[cron] Nightly file review scheduled for 01:00 UTC');
+}
+
+module.exports = { scheduleWeeklyDigest, scheduleDailyEnhancement, scheduleDailyPlanEmail, scheduleGitHubSync, scheduleCodeGeneration, scheduleFileReview };

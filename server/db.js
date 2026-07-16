@@ -207,4 +207,23 @@ try { db.exec(`ALTER TABLE tasks ADD COLUMN code_filename TEXT`); } catch (_) {}
 try { db.exec(`ALTER TABLE tasks ADD COLUMN code_notes TEXT`); } catch (_) {}
 try { db.exec(`ALTER TABLE tasks ADD COLUMN code_generated_at TEXT`); } catch (_) {}
 
+// Nightly per-file review — rotation timestamp (mirrors github_last_synced_at)
+try { db.exec(`ALTER TABLE projects ADD COLUMN github_last_reviewed_at TEXT`); } catch (_) {}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS file_reviews (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    file_path   TEXT NOT NULL,
+    file_sha    TEXT,
+    status      TEXT DEFAULT 'ok',
+    summary     TEXT,
+    suggestion  TEXT,
+    reviewed_at TEXT DEFAULT (datetime('now')),
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_file_reviews_project_path ON file_reviews (project_id, file_path);
+`);
+
 module.exports = db;

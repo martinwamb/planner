@@ -19,7 +19,7 @@ function enqueue(fn) {
   return result;
 }
 
-function rawChat(prompt, { model = MODEL, json = false } = {}) {
+function rawChat(prompt, { model = MODEL, json = false, numCtx } = {}) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
       model,
@@ -27,6 +27,7 @@ function rawChat(prompt, { model = MODEL, json = false } = {}) {
       stream: true,            // Stream tokens so the socket stays alive
       format: json ? 'json' : undefined,
       think: false,
+      options: numCtx ? { num_ctx: numCtx } : undefined,
     });
 
     const parsed = url.parse(`${BASE}/api/generate`);
